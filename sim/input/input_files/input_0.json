@@ -1,0 +1,19 @@
+{
+    "path_to_codes": "/home/jo378964/Dokumente/ma/bp-gbp/sim/input/codes/",
+    "code": "hgp_mkmn_16_4_6",
+    "p_error": -1,
+    "channel" : "depolarizing",
+    "n_errorsamples": 100000,
+    "type_marg" : 0,
+    "n_checks_per_r0" : 4,
+    "w_bp" : 0.7,
+    "alpha_bp" : 1.1,
+    "w_gbp" : 0.9,
+    "gbp_pp" : true,
+    "repeat_split" : false,
+    "repeat_p_init" : false,
+    "get_marg_mess" : false,
+    "print_fails" : false,
+    "print_gbp_details" : true,
+    "output_suffix" : "gbp"
+}
