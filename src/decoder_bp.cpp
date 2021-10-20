@@ -1,7 +1,7 @@
 #include <bp_gbp/decoder_bp.hpp>
 
 
-BpDecoder::BpDecoder(xt::xarray<int> H) : H(H), qubit_label(g), check_label(g),edge_label(g), edge_type(g), m_cq(g), m_qc(g),converged_cq(g), converged_qc(g), marginals(g)
+BpDecoder::BpDecoder(xt::xarray<int> H) : H(H), qubit_label(g), check_label(g),edge_label(g), edge_type(g), m_cq(g), m_qc(g),converged_cq(g), converged_qc(g), erased(g), marginals(g)
 {
     n_c = H.shape(0);
     n_q = H.shape(1);
@@ -9,6 +9,7 @@ BpDecoder::BpDecoder(xt::xarray<int> H) : H(H), qubit_label(g), check_label(g),e
     fill_c_factors();
     lemon::mapFill(g,converged_cq,false);
     lemon::mapFill(g,converged_qc,false);
+    erasure_channel = false;
 }
 
 void BpDecoder::initialize_graph()
@@ -117,6 +118,7 @@ void BpDecoder::fill_c_factors()
 
 void BpDecoder::initialize_bp(xt::xarray<long double> p_init, int max_iter)
 {
+    took_iterations = 0;
     p_initial = p_init;
     max_iterations = max_iter;
     hard_decision =  xt::zeros<int>({max_iter+1,n_q});
@@ -128,16 +130,16 @@ void BpDecoder::initialize_bp(xt::xarray<long double> p_init, int max_iter)
         m_cq[edge] = xt::zeros<long double>({max_iter,4});
         m_qc[edge] = xt::zeros<long double>({max_iter,4});
         
-       if ((qubit_label[g.blueNode(edge)] == 8) || (qubit_label[g.blueNode(edge)] == 11) || (qubit_label[g.blueNode(edge)] == 12))
-        {
-            xt::xarray<long double> tmp = {0.98,0.008,0.006,0.006};
-            xt::row(m_qc[edge],0) = tmp;
-        }
-        else
-        {
-            xt::row(m_qc[edge],0) = p_initial;
-        }
-        // xt::row(m_qc[edge],0) = p_intial;
+    //    if ((qubit_label[g.blueNode(edge)] == 8) || (qubit_label[g.blueNode(edge)] == 11) || (qubit_label[g.blueNode(edge)] == 12))
+    //     {
+    //         xt::xarray<long double> tmp = {0.98,0.008,0.006,0.006};
+    //         xt::row(m_qc[edge],0) = tmp;
+    //     }
+    //     else
+    //     {
+    //         xt::row(m_qc[edge],0) = p_initial;
+    //     }
+        xt::row(m_qc[edge],0) = p_initial;
 
 
 
@@ -153,22 +155,72 @@ void BpDecoder::initialize_bp(xt::xarray<long double> p_init, int max_iter)
 
 void BpDecoder::initialize_bp()
 {
+    took_iterations = 0;
     for (lemon::ListBpGraph::EdgeIt edge(g); edge != lemon::INVALID; ++edge)
     {
-        if ((qubit_label[g.blueNode(edge)] == 8) || (qubit_label[g.blueNode(edge)] == 11) || (qubit_label[g.blueNode(edge)] == 12))
+        // if ((qubit_label[g.blueNode(edge)] == 8) || (qubit_label[g.blueNode(edge)] == 11) || (qubit_label[g.blueNode(edge)] == 12))
+        // {
+        //     xt::xarray<long double> tmp = {0.98,0.008,0.006,0.006};
+        //     xt::row(m_qc[edge],0) = tmp;
+        // }
+        // else
+        // {
+        //     xt::row(m_qc[edge],0) = p_initial;
+        // }
+        if (erasure_channel)
         {
-            xt::xarray<long double> tmp = {0.98,0.008,0.006,0.006};
-            xt::row(m_qc[edge],0) = tmp;
+            if (erased[edge] == false)
+            {
+                xt::xarray<long double> new_p_init = {1.0,0.0,0.0,0.0};
+                xt::row(m_qc[edge],0) = new_p_init;
+            }
+            else
+            {
+                xt::xarray<long double> new_p_init = p_initial;
+                new_p_init(0) = 0;
+                new_p_init /= xt::sum(new_p_init);
+                xt::row(m_qc[edge],0) = new_p_init;
+            }
+            
         }
         else
         {
-            xt::row(m_qc[edge],0) = p_initial;
+             xt::row(m_qc[edge],0) = p_initial;
         }
-        // xt::row(m_qc[edge],0) = p_intial;
     }
 }
 
-xt::xarray<int> BpDecoder::decode_bp(xt::xarray<int> s_0, long double w)
+
+void BpDecoder::initialize_erasures(xt::xarray<int> * erasures)
+{
+    erasure_channel = true;
+    for (lemon::ListBpGraph::EdgeIt edge(g); edge != lemon::INVALID; ++edge)
+    {
+        int qubit = qubit_label[g.blueNode(edge)];
+        if (erasures->at(qubit) == 0)
+        {
+            xt::xarray<long double> new_p_init = {1.0,0.0,0.0,0.0};
+            xt::row(m_qc[edge],0) = new_p_init;
+            converged_qc[edge] = true;
+            converged_cq[edge] = true;
+            erased[edge] = false;
+            marginals[g.blueNode(edge)](0,0) = 1.0;
+            for (int i = 1; i < 4; i++) marginals[g.blueNode(edge)](0,i) = 0.0;
+        }
+        else
+        {
+            xt::xarray<long double> new_p_init = p_initial;
+            new_p_init(0) = 0;
+            new_p_init /= xt::sum(new_p_init);
+            xt::row(m_qc[edge],0) = new_p_init;
+            converged_qc[edge] = false;
+            converged_cq[edge] = false;
+            erased[edge] = true;
+        }
+    }
+}
+
+xt::xarray<int> BpDecoder::decode_bp(xt::xarray<int> s_0, long double w, long double alpha, int type_bp, bool return_if_success, bool only_non_converged)
 {
     if (is_initialized == false)
     {
@@ -176,15 +228,52 @@ xt::xarray<int> BpDecoder::decode_bp(xt::xarray<int> s_0, long double w)
     }
 
     initialize_bp();
+    check_to_bit(&s_0, w, 0);
 
     int took_iter = max_iterations;
     for (int iteration = 1; iteration < max_iterations; iteration++)
     {
-        check_to_bit(&s_0, w, iteration);
-
-        bit_to_check(w, iteration);
-
-        marginals_and_hard_decision(iteration);
+        if (type_bp == 0) //standard parallel
+        {
+            check_to_bit(&s_0, w, iteration);
+            bit_to_check(w, iteration);
+            marginals_and_hard_decision(iteration);
+        }
+        else if (type_bp == 1) //fractional parallel
+        {
+            check_to_bit_fractional(&s_0, w, alpha, iteration);
+            bit_to_check(w, iteration);
+            marginals_and_hard_decision(iteration);
+        }
+        else if (type_bp == 2) //urw parallel
+        {
+            check_to_bit(&s_0, w, iteration);
+            bit_to_check_urw(w, iteration, alpha);
+            marginals_and_hard_decision_urw(iteration, alpha);
+            // marginals_and_hard_decision(iteration);
+        }
+        else if (type_bp == 3) //memory parallel
+        {
+            check_to_bit(&s_0, w, iteration);
+            bit_to_check_memory(w, iteration, alpha);
+            marginals_and_hard_decision(iteration);
+        }
+        else if (type_bp == 10) //standard bit serial
+        {
+            bit_serial_update(&s_0, w, iteration);
+            marginals_and_hard_decision_serial(iteration);
+        }
+        else if (type_bp == 12) //urw bit serial
+        {
+            bit_serial_update_urw(&s_0, w, alpha, iteration);
+            marginals_and_hard_decision_urw(iteration,alpha);
+            // marginals_and_hard_decision(iteration);
+        }
+        else if (type_bp == 20) //standard check serial
+        {
+            check_serial_update(&s_0, w, iteration);
+            marginals_and_hard_decision_serial(iteration);
+        }
 
         xt::xarray<int> s = xt::ones_like(s_0);
         xt::xarray<int> hd =  xt::row(hard_decision,iteration);
@@ -198,7 +287,12 @@ xt::xarray<int> BpDecoder::decode_bp(xt::xarray<int> s_0, long double w)
         if (s == s_0)
         {
             took_iter = iteration;
-            return hd;
+            took_iterations = took_iter;
+            if (return_if_success)
+            {
+                return hd;
+            }
+            
         }
     }
     
@@ -248,6 +342,424 @@ void BpDecoder::check_to_bit(xt::xarray<int> * s_0, long double w, int iteration
                     {
                         int permutation_index = gf4_mul(edge_type[other_edge],gf4_conj(i));
                         permutation(i) = permutation_index;
+                        if (iteration > 0)
+                            permuted_message(i) = m_qc[other_edge](iteration-1,permutation_index);
+                        else
+                            permuted_message(i) = m_qc[other_edge](0,permutation_index);
+                    }
+                    xt::xarray<long double> tmp = xt::linalg::dot(FT,permuted_message);
+                    message *= tmp;
+                }
+            }
+            xt::xarray<long double> tmp = xt::linalg::dot(FT,message);
+            message = tmp;
+            // std::cout << "message = " << message << "\n";
+            // message /= xt::sum(message);
+            xt::xarray<long double> update_message = {1.0,1.0,1.0,1.0};
+
+            for (int p = 0; p < 4; p++)
+            {
+                int i1 = (2*s_0->at(check_label[check])) ^ gf4_mul(edge_type[message_edge],gf4_conj(p));
+                int i2 = i1^1;
+                update_message(p) = 0.5 * (message(i1) + message(i2));
+            }
+            update_message /= xt::sum(update_message);
+
+            if (iteration > 0)
+            {
+                xt::xarray<long double> old_message = xt::row(m_cq[message_edge],iteration-1);
+
+                xt::xarray<long double> res = old_message / (old_message - update_message);
+
+                long double w_max = xt::amin(xt::abs(res))();
+                // std::cout << "c->q res = " << res << " w_max = " << w_max << "\n";
+                if ((w > w_max) && (w > 1))
+                    w = w_max;
+
+                xt::row(m_cq[message_edge],iteration) = (1-w) * old_message + w * update_message;
+            }
+            else
+            {
+                xt::row(m_cq[message_edge],iteration) = update_message;
+            }
+            
+            // std::cout <<  "m_cq[message_edge] = " << m_cq[message_edge] << std::endl;
+            if ( xt::row(m_cq[message_edge],iteration) ==  xt::row(m_cq[message_edge],iteration-1))
+            {
+                converged_cq[message_edge] = true;
+            }
+        }
+    }
+    return;
+}
+
+void BpDecoder::check_to_bit_fractional(xt::xarray<int> * s_0, long double w, long double alpha, int iteration)
+{
+    xt::xarray<long double> FT = xt::ones<long double>({4,4});
+    FT(1,1) = -1;FT(1,3) = -1;FT(2,2) = -1;FT(2,3) = -1;FT(3,1) = -1;FT(3,2) = -1;
+
+    for (lemon::ListBpGraph::RedNodeIt check(g); check != lemon::INVALID; ++check)
+    {
+        xt::xarray<long double> message = {1.0,1.0,1.0,1.0};
+        xt::xarray<long double> permuted_message = {1.0,1.0,1.0,1.0};
+        xt::xarray<int> permutation = {0,1,2,3};
+
+        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,check); message_edge != lemon::INVALID; ++message_edge)
+        {
+            message.fill(1.0);
+            permuted_message.fill(1.0);
+            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,check); other_edge != lemon::INVALID; ++other_edge)
+            {
+                if (other_edge != message_edge)
+                {
+                    for (int i = 0; i<4; i++)
+                    {
+                        int permutation_index = gf4_mul(edge_type[other_edge],gf4_conj(i));
+                        permutation(i) = permutation_index;
+                        long double frac_message = pow(m_cq[other_edge](iteration-1,permutation_index),1.0-1.0/alpha);
+                        if (iteration == 1) frac_message = 1;
+                        permuted_message(i) = m_qc[other_edge](iteration-1,permutation_index) * frac_message;
+                    }
+                    xt::xarray<long double> tmp = xt::linalg::dot(FT,permuted_message);
+                    message *= tmp;
+                }
+            }
+            xt::xarray<long double> tmp = xt::linalg::dot(FT,message);
+            message = tmp;
+            // std::cout << "message = " << message << "\n";
+            // message /= xt::sum(message);
+            xt::xarray<long double> message_tmp = {1.0,1.0,1.0,1.0};
+
+            for (int p = 0; p < 4; p++)
+            {
+                int i1 = (2*s_0->at(check_label[check])) ^ gf4_mul(edge_type[message_edge],gf4_conj(p));
+                int i2 = i1^1;
+                message_tmp(p) = 0.5 * (message(i1) + message(i2));
+            }
+            // if (iteration > 1)
+            // {
+            //     message_tmp *= xt::pow(xt::row(m_cq[message_edge],iteration-1),1.0-1.0/alpha);
+            // }
+
+            message_tmp = (1-w) * xt::row(m_cq[message_edge],iteration-1)+ w * message_tmp;
+        
+            message_tmp /= xt::sum(message_tmp);
+
+            xt::row(m_cq[message_edge],iteration) = message_tmp;
+            // std::cout <<  "m_cq[message_edge] = " << m_cq[message_edge] << std::endl;
+            if ( xt::row(m_cq[message_edge],iteration) ==  xt::row(m_cq[message_edge],iteration-1))
+            {
+                converged_cq[message_edge] = true;
+            }
+        }
+    }
+    return;
+}
+
+void BpDecoder::bit_to_check(long double w, int iteration)
+{
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        xt::xarray<long double> update_message = xt::ones<long double>({4});
+
+        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,qubit); message_edge != lemon::INVALID; ++message_edge)
+        {
+            update_message = p_initial;
+            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,qubit); other_edge != lemon::INVALID; ++other_edge)
+            {
+                if (other_edge != message_edge)
+                {
+                    update_message *= xt::row(m_cq[other_edge],iteration);
+                }
+            }
+            update_message /= xt::sum(update_message);
+            xt::xarray<long double> old_message =  xt::row(m_qc[message_edge],iteration-1);
+
+            xt::xarray<long double> res = old_message / (old_message - update_message);
+            long double w_max = xt::amin(xt::abs(res))();
+            
+            // std::cout << "q->c res = " << res << " w_max = " << w_max << "\n";
+            if ((w > w_max) && (w > 1))
+                w = w_max;
+
+            xt::row(m_qc[message_edge],iteration) =  (1-w) * old_message + w * update_message;
+            // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
+            if (xt::row(m_qc[message_edge],iteration) == xt::row(m_qc[message_edge],iteration-1))
+            {
+                converged_qc[message_edge] = true;
+            }
+        }
+    }
+    return;
+}
+
+void BpDecoder::bit_to_check_memory(long double w, int iteration, long double alpha)
+{
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        xt::xarray<long double> q = xt::ones<long double>({4});
+
+        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,qubit); message_edge != lemon::INVALID; ++message_edge)
+        {
+            q = p_initial;
+            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,qubit); other_edge != lemon::INVALID; ++other_edge)
+            {
+                if (other_edge != message_edge)
+                {
+                    q *= xt::pow(xt::row(m_cq[other_edge],iteration),1.0/alpha);
+                }
+            }
+            q *= xt::pow(xt::row(m_cq[message_edge],iteration),1.0/alpha - 1); 
+            q /= xt::sum(q);
+            xt::row(m_qc[message_edge],iteration) =  (1-w) * xt::row(m_qc[message_edge],iteration-1)+ w * q;
+            // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
+            if (xt::row(m_qc[message_edge],iteration) == xt::row(m_qc[message_edge],iteration-1))
+            {
+                converged_qc[message_edge] = true;
+            }
+        }
+    }
+    return;
+}
+
+void BpDecoder::bit_to_check_urw(long double w, int iteration, long double alpha)
+{
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        xt::xarray<long double> q = xt::ones<long double>({4});
+
+        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,qubit); message_edge != lemon::INVALID; ++message_edge)
+        {
+            q = p_initial;
+            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,qubit); other_edge != lemon::INVALID; ++other_edge)
+            {
+                if (other_edge != message_edge)
+                {
+                    q *= xt::row(m_cq[other_edge],iteration);
+                }
+            }
+            q =  xt::pow(xt::row(m_cq[message_edge],iteration),alpha-1.0) * xt::pow(q,alpha);;
+            // q *= xt::pow(xt::row(m_cq[message_edge],iteration),alpha-1.0);
+            q /= xt::sum(q);
+            xt::row(m_qc[message_edge],iteration) =  (1-w) * xt::row(m_qc[message_edge],iteration-1)+ w * q;
+            // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
+            if (xt::row(m_qc[message_edge],iteration) == xt::row(m_qc[message_edge],iteration-1))
+            {
+                converged_qc[message_edge] = true;
+            }
+        }
+    }
+    return;
+}
+
+void BpDecoder::bit_serial_update(xt::xarray<int> * s_0, long double w, int iteration)
+{
+    xt::xarray<long double> FT = xt::ones<long double>({4,4});
+    FT(1,1) = -1;FT(1,3) = -1;FT(2,2) = -1;FT(2,3) = -1;FT(3,1) = -1;FT(3,2) = -1;
+
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    { // for each qubit do
+
+        // calculate incoming messages
+        for (lemon::ListBpGraph::IncEdgeIt incoming_message_edge(g,qubit); incoming_message_edge != lemon::INVALID; ++incoming_message_edge)
+        {
+            // check = g.redNode(incoming_message_edge);
+
+            xt::xarray<long double> message = {1.0,1.0,1.0,1.0};
+            xt::xarray<long double> permuted_message = {1.0,1.0,1.0,1.0};
+            xt::xarray<int> permutation = {0,1,2,3};
+
+            for (lemon::ListBpGraph::IncEdgeIt check_incoming_edge(g,g.redNode(incoming_message_edge)); check_incoming_edge != lemon::INVALID; ++check_incoming_edge)
+            {
+                if (check_incoming_edge != incoming_message_edge)
+                {
+                    for (int i = 0; i<4; i++)
+                    {
+                        int permutation_index = gf4_mul(edge_type[check_incoming_edge],gf4_conj(i));
+                        permutation(i) = permutation_index;
+                        permuted_message(i) = m_qc[check_incoming_edge](0,permutation_index);
+                    }
+                    xt::xarray<long double> tmp = xt::linalg::dot(FT,permuted_message);
+                    message *= tmp;
+                }
+            }
+            xt::xarray<long double> tmp = xt::linalg::dot(FT,message);
+            message = tmp;
+            // std::cout << "message = " << message << "\n";
+            // message /= xt::sum(message);
+            xt::xarray<long double> message_tmp = {1.0,1.0,1.0,1.0};
+
+            for (int p = 0; p < 4; p++)
+            {
+                int i1 = (2*s_0->at(check_label[g.redNode(incoming_message_edge)])) ^ gf4_mul(edge_type[incoming_message_edge],gf4_conj(p));
+                int i2 = i1^1;
+                message_tmp(p) = 0.5 * (message(i1) + message(i2));
+            }
+            message_tmp /= xt::sum(message_tmp);
+
+            // if (iteration < 4)
+            //     std::cout << "it "<< iteration << " q " << qubit_label[g.blueNode(incoming_message_edge)] << "<- c" << check_label[g.redNode(incoming_message_edge)] <<  "message = " << message_tmp << std::endl;
+
+            xt::row(m_cq[incoming_message_edge],0) =  message_tmp;
+                // std::cout <<  "m_cq[message_edge] = " << m_cq[message_edge] << std::endl;
+                // if ( xt::row(m_cq[message_edge],iteration) ==  xt::row(m_cq[message_edge],iteration-1))
+                // {
+                //     converged_cq[message_edge] = true;
+                // }
+        }
+
+        // calculate all outgoing messages
+        for (lemon::ListBpGraph::IncEdgeIt outgoing_message_edge(g,qubit); outgoing_message_edge != lemon::INVALID; ++outgoing_message_edge)
+        {
+            
+            xt::xarray<long double> q = xt::ones<long double>({4});
+
+            q = p_initial;
+            for (lemon::ListBpGraph::IncEdgeIt incoming_edge(g,qubit); incoming_edge != lemon::INVALID; ++incoming_edge)
+            {
+                if (incoming_edge != outgoing_message_edge)
+                {
+                   q *= xt::row(m_cq[incoming_edge],0);
+                }
+            }
+            q /= xt::sum(q);
+
+            // if (iteration < 4)
+            //     std::cout << "it "<< iteration << " q " << qubit_label[g.blueNode(outgoing_message_edge)] << "-> c" << check_label[g.redNode(outgoing_message_edge)] <<  "message = " << q << std::endl;
+
+
+            xt::row(m_qc[outgoing_message_edge],0) = q;
+                // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
+                // if (xt::row(m_qc[message_edge],iteration) == xt::row(m_qc[message_edge],iteration-1))
+                // {
+                //     converged_qc[message_edge] = true;
+                // }
+        }
+
+    }
+    return;
+}
+
+void BpDecoder::bit_serial_update_urw(xt::xarray<int> * s_0, long double w, long double alpha, int iteration)
+{
+    xt::xarray<long double> FT = xt::ones<long double>({4,4});
+    FT(1,1) = -1;FT(1,3) = -1;FT(2,2) = -1;FT(2,3) = -1;FT(3,1) = -1;FT(3,2) = -1;
+
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        for (lemon::ListBpGraph::IncEdgeIt edge_to_check(g,qubit); edge_to_check != lemon::INVALID; ++edge_to_check)
+        {
+
+            xt::xarray<long double> message = {1.0,1.0,1.0,1.0};
+            xt::xarray<long double> permuted_message = {1.0,1.0,1.0,1.0};
+            xt::xarray<int> permutation = {0,1,2,3};
+
+            for (lemon::ListBpGraph::IncEdgeIt message_edge(g,g.redNode(edge_to_check)); message_edge != lemon::INVALID; ++message_edge)
+            {
+                message.fill(1.0);
+                permuted_message.fill(1.0);
+                for (lemon::ListBpGraph::IncEdgeIt other_edge(g,g.redNode(edge_to_check)); other_edge != lemon::INVALID; ++other_edge)
+                {
+                    if (other_edge != message_edge)
+                    {
+                        for (int i = 0; i<4; i++)
+                        {
+                            int permutation_index = gf4_mul(edge_type[other_edge],gf4_conj(i));
+                            permutation(i) = permutation_index;
+                            permuted_message(i) = m_qc[other_edge](iteration-1,permutation_index);
+                        }
+                        xt::xarray<long double> tmp = xt::linalg::dot(FT,permuted_message);
+                        message *= tmp;
+                    }
+                }
+                xt::xarray<long double> tmp = xt::linalg::dot(FT,message);
+                message = tmp;
+                // std::cout << "message = " << message << "\n";
+                // message /= xt::sum(message);
+                xt::xarray<long double> message_tmp = {1.0,1.0,1.0,1.0};
+
+                for (int p = 0; p < 4; p++)
+                {
+                    int i1 = (2*s_0->at(check_label[g.redNode(edge_to_check)])) ^ gf4_mul(edge_type[message_edge],gf4_conj(p));
+                    int i2 = i1^1;
+                    message_tmp(p) = 0.5 * (message(i1) + message(i2));
+                }
+                message_tmp /= xt::sum(message_tmp);
+
+                xt::row(m_cq[message_edge],iteration) = (1-w) * xt::row(m_cq[message_edge],iteration-1)+ w * message_tmp;
+                // std::cout <<  "m_cq[message_edge] = " << m_cq[message_edge] << std::endl;
+                if ( xt::row(m_cq[message_edge],iteration) ==  xt::row(m_cq[message_edge],iteration-1))
+                {
+                    converged_cq[message_edge] = true;
+                }
+            }
+
+            // adjacent bit updates
+            
+            xt::xarray<long double> q = xt::ones<long double>({4});
+
+            for (lemon::ListBpGraph::IncEdgeIt message_edge(g,qubit); message_edge != lemon::INVALID; ++message_edge)
+            {
+                q = p_initial;
+                for (lemon::ListBpGraph::IncEdgeIt other_edge(g,qubit); other_edge != lemon::INVALID; ++other_edge)
+                {
+                    if (other_edge != message_edge)
+                    {
+                        if (xt::sum(xt::row(m_cq[other_edge],iteration))() != 0)
+                            q *= xt::pow(xt::row(m_cq[other_edge],iteration),alpha);
+                        else
+                            q *= xt::pow(xt::row(m_cq[other_edge],iteration-1),alpha);
+                    }
+                }
+                q *= xt::pow(xt::row(m_cq[message_edge],iteration),alpha-1.0);
+                q /= xt::sum(q);
+                xt::row(m_qc[message_edge],iteration) =  (1-w) * xt::row(m_qc[message_edge],iteration-1)+ w * q;
+                // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
+                if (xt::row(m_qc[message_edge],iteration) == xt::row(m_qc[message_edge],iteration-1))
+                {
+                    converged_qc[message_edge] = true;
+                }
+            }
+        }
+
+    }
+    return;
+}
+
+void BpDecoder::check_serial_update(xt::xarray<int> * s_0, long double w, int iteration)
+{
+    for (lemon::ListBpGraph::RedNodeIt check(g); check != lemon::INVALID; ++check)
+    {
+        check_update(check,iteration, s_0, w);
+        bit_update(check,iteration,w);
+    }
+    
+    return;
+}
+
+void BpDecoder::check_update(lemon::ListBpGraph::RedNode& check, int iteration, xt::xarray<int>* s_0 , long double w)
+{
+    xt::xarray<long double> FT = xt::ones<long double>({4,4});
+    FT(1,1) = -1;FT(1,3) = -1;FT(2,2) = -1;FT(2,3) = -1;FT(3,1) = -1;FT(3,2) = -1;
+    for (lemon::ListBpGraph::IncEdgeIt edge_to_qubit(g,check); edge_to_qubit != lemon::INVALID; ++edge_to_qubit)
+    {
+        // qubit: g.blueNode(edge_to_qubit)
+        xt::xarray<long double> message = {1.0,1.0,1.0,1.0};
+        xt::xarray<long double> permuted_message = {1.0,1.0,1.0,1.0};
+        xt::xarray<int> permutation = {0,1,2,3};
+
+        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,g.blueNode(edge_to_qubit)); message_edge != lemon::INVALID; ++message_edge)
+        {
+            message.fill(1.0);
+            permuted_message.fill(1.0);
+            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,g.blueNode(edge_to_qubit)); other_edge != lemon::INVALID; ++other_edge)
+            {
+                if (other_edge != message_edge)
+                {
+                    for (int i = 0; i<4; i++)
+                    {
+                        int permutation_index = gf4_mul(edge_type[other_edge],gf4_conj(i));
+                        permutation(i) = permutation_index;
                         permuted_message(i) = m_qc[other_edge](iteration-1,permutation_index);
                     }
                     xt::xarray<long double> tmp = xt::linalg::dot(FT,permuted_message);
@@ -276,19 +788,19 @@ void BpDecoder::check_to_bit(xt::xarray<int> * s_0, long double w, int iteration
             }
         }
     }
-    return;
 }
 
-void BpDecoder::bit_to_check(long double w, int iteration)
+void BpDecoder::bit_update(lemon::ListBpGraph::RedNode& check, int iteration, long double w)
 {
-    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    for (lemon::ListBpGraph::IncEdgeIt edge_to_qubit(g,check); edge_to_qubit != lemon::INVALID; ++edge_to_qubit)
     {
+    // qubit: g.blueNode(edge_to_qubit)
         xt::xarray<long double> q = xt::ones<long double>({4});
 
-        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,qubit); message_edge != lemon::INVALID; ++message_edge)
+        for (lemon::ListBpGraph::IncEdgeIt message_edge(g,g.blueNode(edge_to_qubit)); message_edge != lemon::INVALID; ++message_edge)
         {
             q = p_initial;
-            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,qubit); other_edge != lemon::INVALID; ++other_edge)
+            for (lemon::ListBpGraph::IncEdgeIt other_edge(g,g.blueNode(edge_to_qubit)); other_edge != lemon::INVALID; ++other_edge)
             {
                 if (other_edge != message_edge)
                 {
@@ -304,7 +816,6 @@ void BpDecoder::bit_to_check(long double w, int iteration)
             }
         }
     }
-    return;
 }
 
 void BpDecoder::marginals_and_hard_decision(int iteration)
@@ -316,6 +827,61 @@ void BpDecoder::marginals_and_hard_decision(int iteration)
         {
             q *= xt::row(m_cq[incoming_edge],iteration);
         }
+        q /= xt::sum(q);
+        xt::row(marginals[qubit],iteration) = q;
+        // m = q;
+        int hd =  xt::argmax(q,0)();
+        hard_decision(iteration,qubit_label[qubit]) = hd;
+    }
+}
+
+void BpDecoder::marginals_and_hard_decision_serial(int iteration)
+{
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        xt::xarray<long double> q = p_initial;
+        for (lemon::ListBpGraph::IncEdgeIt incoming_edge(g,qubit); incoming_edge != lemon::INVALID; ++incoming_edge)
+        {
+            q *= xt::row(m_cq[incoming_edge],0);
+        }
+        q /= xt::sum(q);
+        // if (iteration < 4)
+        //     std::cout << "it " << iteration << " qubit " << qubit_label[qubit] << " marginals " << q << "\n";
+        xt::row(marginals[qubit],iteration) = q;
+        // m = q;
+        int hd =  xt::argmax(q,0)();
+        hard_decision(iteration,qubit_label[qubit]) = hd;
+    }
+}
+
+void BpDecoder::marginals_and_hard_decision_fractional(int iteration, long double alpha)
+{
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        xt::xarray<long double> q = p_initial;
+        for (lemon::ListBpGraph::IncEdgeIt incoming_edge(g,qubit); incoming_edge != lemon::INVALID; ++incoming_edge)
+        {
+            q *= xt::pow(xt::row(m_cq[incoming_edge],iteration),alpha);
+        }
+        q /= xt::sum(q);
+        xt::row(marginals[qubit],iteration) = q;
+        // m = q;
+        int hd =  xt::argmax(q,0)();
+        hard_decision(iteration,qubit_label[qubit]) = hd;
+    }
+}
+
+void BpDecoder::marginals_and_hard_decision_urw(int iteration, long double alpha)
+{
+    for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
+    {
+        xt::xarray<long double> q = p_initial;
+        for (lemon::ListBpGraph::IncEdgeIt incoming_edge(g,qubit); incoming_edge != lemon::INVALID; ++incoming_edge)
+        {
+            q *= xt::row(m_cq[incoming_edge],iteration);
+            // q *= xt::pow(xt::row(m_cq[incoming_edge],iteration),alpha);
+        }
+        q = xt::pow(q,alpha);
         q /= xt::sum(q);
         xt::row(marginals[qubit],iteration) = q;
         // m = q;

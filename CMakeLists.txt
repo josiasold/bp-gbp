@@ -15,5 +15,26 @@ add_subdirectory(sim)
 install(TARGETS sim
         DESTINATION ${PROJECT_SOURCE_DIR}/sim)
 
+install(TARGETS sim_w
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
+install(TARGETS sim_alpha
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
+install(TARGETS sim_KL
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
+install(TARGETS sim_KL_repeatw
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
+install(TARGETS sim_KLll
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
+install(TARGETS sim_KL_nonCSS
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
 install(TARGETS sim_combs
+        DESTINATION ${PROJECT_SOURCE_DIR}/sim)
+
+install(TARGETS sim_gf2
         DESTINATION ${PROJECT_SOURCE_DIR}/sim)

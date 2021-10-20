@@ -13,6 +13,7 @@
 #include <bp_gbp/error_channels.hpp>
 #include <bp_gbp/decoder_bp.hpp>
 #include <bp_gbp/decoder_bp_kuolai.hpp>
+#include <bp_gbp/decoder_bp_klm.hpp>
 #include <bp_gbp/constructor_gbp.hpp>
 #include <bp_gbp/decoder_gbp.hpp>
 // #include <bp_gbp/gbp_functions.hpp>
@@ -20,6 +21,7 @@
 #include "xtensor/xarray.hpp"
 #include "xtensor/xnpy.hpp" // load_npy, dump_npy
 #include "xtensor/xio.hpp"  // <<
+#include "xtensor/xrandom.hpp" // for seeding random generator
 #include <xtensor/xindex_view.hpp>
 
 #include "nlohmann/json.hpp"
@@ -51,13 +53,15 @@ int main(int argc, char **argv)
 
     int n_errorsamples = json_input.at("n_errorsamples");
     long double p = json_input.at("p_error");
+    long double p_initial_bp = json_input.at("p_initial_bp");
     std::string channel = json_input.at("channel");
 
     long double w_gbp = json_input.at("w_gbp");
     long double w_bp = json_input.at("w_bp");
     long double alpha_bp = json_input.at("alpha_bp");
-    int type_marg = json_input.at("type_marg");
-    int n_checks_per_r0 = json_input.at("n_checks_per_r0");
+    int type_gbp = json_input.at("type_gbp");
+    int type_bp = json_input.at("type_bp");
+    int max_checks_per_r0 = json_input.at("max_checks_per_r0");
 
     std::string pathToCodes = json_input.at("path_to_codes");
     std::string code = json_input.at("code");
@@ -65,13 +69,17 @@ int main(int argc, char **argv)
     std::string pathToH_Z = pathToCodes + code + "_hz.npy";
 
     bool gbp_pp = json_input.at("gbp_pp");
-    bool repeat_p_init = json_input.at("repeat_p_init");
+    bool repeat_p_init = json_input.value("repeat_p_init",false);
     bool repeat_split = json_input.at("repeat_split");
+    int split_strategy = json_input.value("split_strategy",0);
 
     bool get_marg_mess = json_input.at("get_marg_mess");
+    bool print_bp_details = json_input.at("print_bp_details");
     bool print_gbp_details = json_input.at("print_gbp_details");
     bool print_fails = json_input.at("print_fails");
 
+    bool return_if_success = json_input.at("return_if_success");
+    bool only_non_converged = json_input.at("only_non_converged");
     std::string output_suffix = json_input.at("output_suffix");
     std::string OUTPUT_DIR;
     if (output_suffix == "")
@@ -120,8 +128,18 @@ int main(int argc, char **argv)
     std::cout << "rank(H_X) = " << rank_H_X << std::endl;
     std::cout << "rank(H_Z) = " << rank_H_Z << std::endl;
     std::cout << "rank(H) = " << rank_H << std::endl;
-    // condtruct BpDecoder
-    BpDecoderKL bpDecoder(H);
+
+    // construct random generator
+    // std::random_device rd;                                  // obtain a random number from hardware
+    // std::mt19937 random_generator(rd());                    // seed the generator
+    // xt::random::seed(time(NULL));
+
+
+    // construct channel
+    NoisyChannel noisyChannel;
+
+    // construct BpDecoder
+    BpDecoder bpDecoder(H);
 
     // error channel
     xt::xarray<long double> ps;
@@ -145,6 +163,10 @@ int main(int argc, char **argv)
     else if (p == -4)
     {
         ps = {0.0025,0.005,0.0075,0.01,0.0125,0.015};
+    }
+    else if (p == -5)
+    {
+        ps = {1.0/7.0,2.0/7.0,3.0/7.0,4.0/7.0,5.0/7.0,6.0/7.0,7.0/7.0};
     }
     else
     {
@@ -182,45 +204,85 @@ int main(int argc, char **argv)
         dec_gbp_fail = 0;
 
         double p_error = ps(i_p);
-        xt::xarray<long double> p_initial = {1 - p_error, p_error / 3.0, p_error / 3.0, p_error / 3.0};
-        bpDecoder.initialize_bp(p_initial, max_iter);
+        xt::xarray<long double> p_initial;
+        if (channel == "xz")
+        {
+            long double p_xz = 1-sqrt(1-p_error);
+            long double p_x = p_xz*(1-p_xz);
+            long double p_y = p_xz*p_xz;
+            long double p_z = (1-p_xz)*p_xz;
+            p_initial = {1 - p_error, p_x,p_z,p_y};
+        }
+        else
+        {
+            p_initial = {1 - p_error, p_error / 3.0, p_error / 3.0, p_error / 3.0};
+        }
+        if (p_initial_bp == -1)
+        {
+            bpDecoder.initialize_bp(p_initial, max_iter);
+        }
+        else
+        {
+            xt::xarray<long double> p_initial_for_decoder = {1 - p_initial_bp, p_initial_bp / 3.0, p_initial_bp / 3.0, p_initial_bp / 3.0};
+            bpDecoder.initialize_bp(p_initial_for_decoder, max_iter);
+        }
+        
 
         for (size_t i_e = 0; i_e < n_errorsamples; i_e++)
         {
             xt::xarray<int> y = x;
             if (channel == "depolarizing")
             {
-                depolarizing_channel(&y, p_error);
+                // depolarizing_channel(&y, p_error,&random_generator);
+                noisyChannel.send_through_pauli_channel(&y,p_error,0);
+            }
+            else if (channel == "xz")
+            {
+                // xz_channel(&y, p_error,&random_generator);
+                noisyChannel.send_through_pauli_channel(&y,p_error,1);
             }
             else if (channel == "custom")
             {
-                // y(0) = 1;
-                // y(4) = 1;
-                // y(9) = 1;
-
-                y(44) = 3;
-                y(193) = 1;
-                y(200) = 1;
-                y(202) = 1;
-                y(382) = 3;
+                y(12) = 1;
+                y(30) = 1;
+                
+            }
+            else if (channel == "custom2")
+            {
+                y(1) = 3;
+                y(13) = 2;
+                y(48) = 3;
+                y(227) = 2;
+                y(250) = 1;
+                y(269) = 3;
+                y(317) = 2;
+                y(347) = 1;
                 
             }
             else if (channel == "const_weight")
             {
                 int weight = (int)(p_error * n_q);
-                const_weight_error_channel(&y, weight);
+                // const_weight_error_channel(&y, weight,&random_generator);
+                noisyChannel.const_weight_error_channel(&y, weight);
             }
             else if (channel == "const_weight_restricted")
             {
                 int weight = (int)(p_error * n_q);
-                const_weight_error_channel(&y, weight, 16, 1);
+                // const_weight_error_channel(&y, weight, 16, 1, &random_generator);
+                noisyChannel.const_weight_error_channel(&y, weight, 16, 1);
+            }
+            else if (channel == "erasure")
+            {
+                xt::xarray<int> erasures = xt::zeros<int>({n_q});
+                noisyChannel.erasure_channel(&y, &erasures,p_error);
+                bpDecoder.initialize_erasures(&erasures);
+
             }
             else
             {
                 std::cerr << "Not a valid channel, choose frome {'depolarizing', 'custom', 'const_weight', 'const_weight_restricted'}" << std::endl;
                 return 1;
             }
-            // std::cout << "y = " << y << std::endl;
             if (y == x)
             {
                 ch_sc++;
@@ -228,9 +290,17 @@ int main(int argc, char **argv)
             else
             {
                 xt::xarray<int> s_0 = gf4_syndrome(&y, &H);
-                // std::cout << "s_0 = " << s_0 << std::endl;
-                xt::xarray<int> error_guess = bpDecoder.decode_bp(s_0, w_bp, alpha_bp);
+                xt::xarray<int> error_guess = bpDecoder.decode_bp(s_0, w_bp, alpha_bp, type_bp, return_if_success, only_non_converged);
+                // xt::xarray<int> error_guess = xt::zeros<int>({n_q});
                 xt::xarray<int> residual_error = error_guess ^ y;
+
+                if (print_bp_details)
+                {
+                    print_container(y,"y",true);
+                    print_container(s_0,"s_0",true);
+                    print_container(error_guess,"error_guess",true);
+                    print_container(residual_error,"residual_error",true);
+                }
 
                 // std::cout << "error_guess = " << error_guess << std::endl;
                 if (get_marg_mess == true)
@@ -239,13 +309,13 @@ int main(int argc, char **argv)
                     xt::xarray<long double> messages = bpDecoder.get_messages();
                     xt::xarray<int> hard_decisions = bpDecoder.get_hard_decisions();
                     xt::xarray<int> syndromes = bpDecoder.get_syndromes();
-                    // xt::xarray<long double> free_energy = bpDecoder.get_free_energy();
+                    xt::xarray<long double> free_energy = bpDecoder.get_free_energy();
 
                     xt::dump_npy(OUTPUT_DIR + "/marginals_bp.npy", marginals);
                     xt::dump_npy(OUTPUT_DIR + "/messages_bp.npy", messages);
                     xt::dump_npy(OUTPUT_DIR + "/hard_decisions_bp.npy", hard_decisions);
                     xt::dump_npy(OUTPUT_DIR + "/syndromes_bp.npy", syndromes);
-                    // xt::dump_npy(OUTPUT_DIR+"/free_energy_bp.npy",free_energy);
+                    xt::dump_npy(OUTPUT_DIR+"/free_energy_bp.npy",free_energy);
                 }
 
                 bool done = false;
@@ -259,209 +329,216 @@ int main(int argc, char **argv)
                 else if (gbp_pp == true)
                 {
                     did_gbp_pp = true;
-                    xt::xarray<int> from_gbp = xt::zeros<int>({n_q});
-                    xt::xarray<int> residual_error_sub;
+                    xt::xarray<int> residual_s = s^s_0;
+                // xt::xarray<int> from_gbp = gbpPP(residual_s,H_X,H_Z,&bpDecoder,n_checks_per_r0, w_for_gbp, type_gbp, return_if_success, print_gbp_details, get_marg_mess, OUTPUT_DIR,surface);
+                    int took_iterations = 0;
+                    int n_checks_per_r0 = 2;
+                    bool surface = false;
+                    xt::xarray<int> from_gbp = gbpPP(residual_s,H_X,H_Z,&bpDecoder, p_initial,n_checks_per_r0, w_gbp, type_gbp, split_strategy, 0, return_if_success, print_gbp_details, &took_iterations, get_marg_mess, OUTPUT_DIR, surface);
 
-                    xt::xarray<int> residual_s = gf4_syndrome(&residual_error, &H);
+                    // xt::xarray<int> from_gbp = xt::zeros<int>({n_q});
+                    // xt::xarray<int> residual_error_sub;
 
-                    xt::xarray<int> error_guess_x = get_x(error_guess);
-                    xt::xarray<int> error_guess_z = get_z(error_guess);
-                    xt::xarray<int> s_eg_x = gf2_syndrome(&error_guess_x, &H_Z);
-                    xt::xarray<int> s_eg_z = gf2_syndrome(&error_guess_z, &H_X);
+                    // xt::xarray<int> residual_s = gf4_syndrome(&residual_error, &H);
 
-                    xt::xarray<int> residual_error_x = get_x(residual_error);
-                    xt::xarray<int> residual_error_z = get_z(residual_error);
+                    // xt::xarray<int> error_guess_x = get_x(error_guess);
+                    // xt::xarray<int> error_guess_z = get_z(error_guess);
+                    // xt::xarray<int> s_eg_x = gf2_syndrome(&error_guess_x, &H_Z);
+                    // xt::xarray<int> s_eg_z = gf2_syndrome(&error_guess_z, &H_X);
 
-                    xt::xarray<int> residual_s_x = gf2_syndrome(&residual_error_x, &H_Z);
-                    xt::xarray<int> residual_s_z = gf2_syndrome(&residual_error_z, &H_X);
+                    // xt::xarray<int> residual_error_x = get_x(residual_error);
+                    // xt::xarray<int> residual_error_z = get_z(residual_error);
 
-                    if (print_gbp_details == true)
-                    {
-                        std::cout << "\n***** gbp: start *****\n";
-                        print_container(y, "bp: y", true);
-                        print_container(s_0, "bp: s_0", true);
+                    // xt::xarray<int> residual_s_x = gf2_syndrome(&residual_error_x, &H_Z);
+                    // xt::xarray<int> residual_s_z = gf2_syndrome(&residual_error_z, &H_X);
 
-                        print_container(error_guess_x, "bp: error_guess_x", true);
-                        print_container(error_guess_z, "bp: error_guess_z", true);
+                    // if (print_gbp_details == true)
+                    // {
+                    //     std::cout << "\n***** gbp: start *****\n";
+                    //     print_container(y, "bp: y", true);
+                    //     print_container(s_0, "bp: s_0", true);
 
-                        print_container(s_eg_x, "bp: s_eg_x", true);
-                        print_container(s_eg_z, "bp: s_eg_z", true);
+                    //     print_container(error_guess_x, "bp: error_guess_x", true);
+                    //     print_container(error_guess_z, "bp: error_guess_z", true);
 
-                        print_container(residual_error_x, "bp: residual_error_x", true);
-                        print_container(residual_error_z, "bp: residual_error_z", true);
+                    //     print_container(s_eg_x, "bp: s_eg_x", true);
+                    //     print_container(s_eg_z, "bp: s_eg_z", true);
 
-                        print_container(residual_s_x, "bp: residual_s_x", true);
-                        print_container(residual_s_z, "bp: residual_s_z", true);
-                    }
-                    for (int pauli = 1; pauli <= 2; pauli++)
-                    {
-                        if ((pauli == 1) && (xt::sum(residual_s_x)() == 0))
-                        {
-                            pauli++;
-                        }
-                        if ((pauli == 2) && (xt::sum(residual_s_z)() == 0))
-                        {
-                            break;
-                        }
-                        xt::xarray<int> s_sub_0;
-                        xt::xarray<int> qi;
-                        xt::xarray<int> ci;
+                    //     print_container(residual_error_x, "bp: residual_error_x", true);
+                    //     print_container(residual_error_z, "bp: residual_error_z", true);
 
-                        xt::xarray<int> H_sub = get_H_sub(&bpDecoder, H, residual_s, &s_sub_0, &ci, &qi, 3 - pauli,print_gbp_details);
+                    //     print_container(residual_s_x, "bp: residual_s_x", true);
+                    //     print_container(residual_s_z, "bp: residual_s_z", true);
+                    // }
+                    // for (int pauli = 1; pauli <= 2; pauli++)
+                    // {
+                    //     if ((pauli == 1) && (xt::sum(residual_s_x)() == 0))
+                    //     {
+                    //         pauli++;
+                    //     }
+                    //     if ((pauli == 2) && (xt::sum(residual_s_z)() == 0))
+                    //     {
+                    //         break;
+                    //     }
+                    //     xt::xarray<int> s_sub_0;
+                    //     xt::xarray<int> qi;
+                    //     xt::xarray<int> ci;
 
-                        int n_ci = H_sub.shape(0);
-                        int n_qi = H_sub.shape(1);
+                    //     xt::xarray<int> H_sub = get_H_sub(&bpDecoder, H, residual_s, &s_sub_0, &ci, &qi, 3 - pauli,print_gbp_details);
 
-                        if (print_gbp_details == true)
-                        {
-                            std::cout << "H_sub: (" << n_ci << "," << n_qi << ")\n";// << H_sub << std::endl;
-                            std::cout << "s_sub_0 = \n" << s_sub_0 << std::endl;
-                        }
+                    //     int n_ci = H_sub.shape(0);
+                    //     int n_qi = H_sub.shape(1);
+
+                    //     if (print_gbp_details == true)
+                    //     {
+                    //         std::cout << "H_sub: (" << n_ci << "," << n_qi << ")\n";// << H_sub << std::endl;
+                    //         std::cout << "s_sub_0 = \n" << s_sub_0 << std::endl;
+                    //     }
 
                         
                         
-                        if (n_qi < 50)
-                        {
+                    //     if (n_qi < 50)
+                    //     {
 
-                            int max_iter_gbp = 50;
+                    //         int max_iter_gbp = 50;
 
-                            long double new_p = (long double)n_ci/(long double)n_c;
-                            // long double new_p = 0.0075;
-                            // std::cout << "new_p = " << new_p << "\n";
+                    //         long double new_p = (long double)n_ci/(long double)n_c;
+                    //         // long double new_p = 0.15;
+                    //         // std::cout << "new_p = " << new_p << "\n";
 
-                            xt::xarray<long double> p_initial_gf2 = {1 - new_p, new_p};
+                    //         xt::xarray<long double> p_initial_gf2 = {1 - new_p, new_p};
 
-                            GbpDecoder gbpDecoder(H_sub, max_iter_gbp, n_checks_per_r0);
-                            std::cout << "constructed decoder\n";
+                    //         GbpDecoder gbpDecoder(H_sub, max_iter_gbp, max_checks_per_r0);
+                    //         std::cout << "constructed decoder\n";
 
-                            // GbpDecoder2 gbpDecoder2(H_sub, max_iter_gbp,false);
+                    //         // GbpDecoder2 gbpDecoder2(H_sub, max_iter_gbp,false);
 
-                            xt::xarray<int> error_guess_sub = xt::zeros<int>({n_qi});
+                    //         xt::xarray<int> error_guess_sub = xt::zeros<int>({n_qi});
 
-                            error_guess_sub = gbpDecoder.decode(s_sub_0, p_initial_gf2, type_marg, w_gbp);
-                            if (get_marg_mess == true)
-                                {
-                                    xt::xarray<long double> marginals = gbpDecoder.get_marginals();
-                                    xt::xarray<long double> messages = gbpDecoder.get_messages();
-                                    xt::xarray<int> hard_decisions = gbpDecoder.get_hard_decisions();
-                                    // xt::xarray<int> syndromes = gbpDecoder2.get_syndromes();
+                    //         error_guess_sub = gbpDecoder.decode(s_sub_0, p_initial_gf2, type_gbp, w_gbp, return_if_success);
+                    //         if (get_marg_mess == true)
+                    //             {
+                    //                 xt::xarray<long double> marginals = gbpDecoder.get_marginals();
+                    //                 xt::xarray<long double> messages = gbpDecoder.get_messages();
+                    //                 xt::xarray<int> hard_decisions = gbpDecoder.get_hard_decisions();
+                    //                 // xt::xarray<int> syndromes = gbpDecoder2.get_syndromes();
 
-                                    xt::dump_npy(OUTPUT_DIR + "/marginals.npy", marginals);
-                                    xt::dump_npy(OUTPUT_DIR + "/messages.npy", messages);
-                                    xt::dump_npy(OUTPUT_DIR + "/hard_decisions.npy", hard_decisions);
-                                    // xt::dump_npy(OUTPUT_DIR+"/syndromes.npy",syndromes);
-                                }
-                            xt::xarray<int> s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
+                    //                 xt::dump_npy(OUTPUT_DIR + "/marginals.npy", marginals);
+                    //                 xt::dump_npy(OUTPUT_DIR + "/messages.npy", messages);
+                    //                 xt::dump_npy(OUTPUT_DIR + "/hard_decisions.npy", hard_decisions);
+                    //                 // xt::dump_npy(OUTPUT_DIR+"/syndromes.npy",syndromes);
+                    //             }
+                    //         xt::xarray<int> s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
 
-                            // int trys_p_init = 0;
-                            // std::vector<long double> p_rep = {new_p, 0.15, 0.2, 0.25, 0.3, 0.4};
-                            // int max_trys_p_init = p_rep.size();
+                    //         int trys_p_init = 0;
+                    //         std::vector<long double> p_rep = {new_p, 0.15, 0.2, 0.25, 0.3, 0.4};
+                    //         int max_trys_p_init = p_rep.size();
 
-                            // while ((done == false) && (trys_p_init < max_trys_p_init))
-                            // {
+                    //         // while ((done == false) && (trys_p_init < max_trys_p_init))
+                    //         // {
 
-                            //     // gbpDecoder2.prepare(p_initial_gf2, max_iter_gbp);
-                            //     error_guess_sub = gbpDecoder.decode(s_sub_0, p_initial_gf2, type_marg, w_gbp);
+                    //         //     // gbpDecoder2.prepare(p_initial_gf2, max_iter_gbp);
+                    //         //     error_guess_sub = gbpDecoder.decode(s_sub_0, p_initial_gf2, type_gbp, w_gbp);
 
-                            //     // error_guess_sub = gbpDecoder2.decode(s_sub_0,p_initial_gf2,max_iter_gbp,type_marg,w_gbp);
+                    //         //     // error_guess_sub = gbpDecoder2.decode(s_sub_0,p_initial_gf2,max_iter_gbp,type_gbp,w_gbp);
 
-                            //     if (get_marg_mess == true)
-                            //     {
-                            //         xt::xarray<long double> marginals = gbpDecoder.get_marginals();
-                            //         xt::xarray<long double> messages = gbpDecoder.get_messages();
-                            //         xt::xarray<int> hard_decisions = gbpDecoder.get_hard_decisions();
-                            //         // xt::xarray<int> syndromes = gbpDecoder2.get_syndromes();
+                    //         //     if (get_marg_mess == true)
+                    //         //     {
+                    //         //         xt::xarray<long double> marginals = gbpDecoder.get_marginals();
+                    //         //         xt::xarray<long double> messages = gbpDecoder.get_messages();
+                    //         //         xt::xarray<int> hard_decisions = gbpDecoder.get_hard_decisions();
+                    //         //         // xt::xarray<int> syndromes = gbpDecoder2.get_syndromes();
 
-                            //         xt::dump_npy(OUTPUT_DIR + "/marginals.npy", marginals);
-                            //         xt::dump_npy(OUTPUT_DIR + "/messages.npy", messages);
-                            //         xt::dump_npy(OUTPUT_DIR + "/hard_decisions.npy", hard_decisions);
-                            //         // xt::dump_npy(OUTPUT_DIR+"/syndromes.npy",syndromes);
-                            //     }
+                    //         //         xt::dump_npy(OUTPUT_DIR + "/marginals.npy", marginals);
+                    //         //         xt::dump_npy(OUTPUT_DIR + "/messages.npy", messages);
+                    //         //         xt::dump_npy(OUTPUT_DIR + "/hard_decisions.npy", hard_decisions);
+                    //         //         // xt::dump_npy(OUTPUT_DIR+"/syndromes.npy",syndromes);
+                    //         //     }
 
-                            //     xt::xarray<int> s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
+                    //         //     xt::xarray<int> s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
 
-                            //     // std::cout << "s_sub_1 = " << s_sub << "  (trys_p_init,trys_split) = (" << trys_p_init << ",0), p_init = " << p_rep[trys_p_init] << std::endl;
+                    //         //     // std::cout << "s_sub_1 = " << s_sub << "  (trys_p_init,trys_split) = (" << trys_p_init << ",0), p_init = " << p_rep[trys_p_init] << std::endl;
 
-                            //     if (s_sub == s_sub_0)
-                            //     {
-                            //         // std::cout << "** success" << std::endl;
-                            //         done = true;
-                            //     }
-                            //     else
-                            //     {
-                            //         if (repeat_split == true)
-                            //         {
-                            //             int trys_split = 0;
-                            //             int max_trys_split = 5;
-                            //             while ((done == false) && (trys_split < max_trys_split))
-                            //             {
-                            //                 xt::xarray<int> new_s(n_ci);
-                            //                 new_s = s_sub ^ s_sub_0;
-                            //                 xt::xarray<int> new_error_guess = gbpDecoder.decode(new_s, p_initial_gf2, type_marg, w_gbp); //,max_iter,type_marg,w_gbp);
-                            //                 // xt::xarray<int> new_error_guess = gbpDecoder2.decode(new_s,p_initial_gf2,max_iter,type_marg,w_gbp);
-                            //                 if (xt::sum(new_error_guess)() != 0)
-                            //                 {
-                            //                     error_guess_sub ^= new_error_guess;
-                            //                     s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
-                            //                     xt::xarray<int> res_s_sub = s_sub_0 ^ s_sub;
-                            //                     // std::cout << "s_sub_" << trys_split + 2 << " = " << s_sub << "  (trys_p_init,trys_split) = (" << trys_p_init << "," << trys_split + 1 << "), p_init = " << p_rep[trys_p_init] << std::endl;
-                            //                     if (s_sub == s_sub_0)
-                            //                     {
-                            //                         // rep_split++;
-                            //                         // std::cout << "** success" << std::endl;
-                            //                         done = true;
-                            //                     }
-                            //                     else
-                            //                     {
-                            //                         trys_split++;
-                            //                     }
-                            //                 }
-                            //                 else
-                            //                 {
-                            //                     trys_split = max_trys_split;
-                            //                 }
-                            //             }
-                            //         }
-                            //         else if ((repeat_p_init == true) && (done == false))
-                            //         {
-                            //             trys_p_init++;
-                            //             p_initial_gf2 = {1 - p_rep[trys_p_init], p_rep[trys_p_init]};
-                            //             // gbpDecoder2.prepare(p_initial_gf2, max_iter);
-                            //         }
+                    //         //     if (s_sub == s_sub_0)
+                    //         //     {
+                    //         //         // std::cout << "** success" << std::endl;
+                    //         //         done = true;
+                    //         //     }
+                    //             // else
+                    //             // {
+                    //             //     if (repeat_split == true)
+                    //             //     {
+                    //             //         int trys_split = 0;
+                    //             //         int max_trys_split = 5;
+                    //             //         while ((done == false) && (trys_split < max_trys_split))
+                    //             //         {
+                    //             //             xt::xarray<int> new_s(n_ci);
+                    //             //             new_s = s_sub ^ s_sub_0;
+                    //             //             xt::xarray<int> new_error_guess = gbpDecoder.decode(new_s, p_initial_gf2, type_gbp, w_gbp); //,max_iter,type_gbp,w_gbp);
+                    //             //             // xt::xarray<int> new_error_guess = gbpDecoder2.decode(new_s,p_initial_gf2,max_iter,type_gbp,w_gbp);
+                    //             //             if (xt::sum(new_error_guess)() != 0)
+                    //             //             {
+                    //             //                 error_guess_sub ^= new_error_guess;
+                    //             //                 s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
+                    //             //                 xt::xarray<int> res_s_sub = s_sub_0 ^ s_sub;
+                    //             //                 // std::cout << "s_sub_" << trys_split + 2 << " = " << s_sub << "  (trys_p_init,trys_split) = (" << trys_p_init << "," << trys_split + 1 << "), p_init = " << p_rep[trys_p_init] << std::endl;
+                    //             //                 if (s_sub == s_sub_0)
+                    //             //                 {
+                    //             //                     // rep_split++;
+                    //             //                     // std::cout << "** success" << std::endl;
+                    //             //                     done = true;
+                    //             //                 }
+                    //             //                 else
+                    //             //                 {
+                    //             //                     trys_split++;
+                    //             //                 }
+                    //             //             }
+                    //             //             else
+                    //             //             {
+                    //             //                 trys_split = max_trys_split;
+                    //             //             }
+                    //             //         }
+                    //             //     }
+                    //             //     else if ((repeat_p_init == true) && (done == false))
+                    //             //     {
+                    //             //         trys_p_init++;
+                    //             //         p_initial_gf2 = {1 - p_rep[trys_p_init], p_rep[trys_p_init]};
+                    //             //         // gbpDecoder2.prepare(p_initial_gf2, max_iter);
+                    //             //     }
 
-                            //         else if ((repeat_p_init == false) && (done == false))
-                            //         {
-                            //             done = true;
-                            //         }
+                    //             //     else if ((repeat_p_init == false) && (done == false))
+                    //             //     {
+                    //             //         done = true;
+                    //             //     }
 
-                            //         else if ((repeat_split == false) && (repeat_p_init == false))
-                            //         {
-                            //             done = true;
-                            //         }
-                            //     }
-                            // }
+                    //             //     else if ((repeat_split == false) && (repeat_p_init == false))
+                    //             //     {
+                    //             //         done = true;
+                    //             //     }
+                    //             // }
+                    //         // }
 
-                        // xt::xarray<int> new_error_guess = gbpDecoder.decode(s_sub,p_initial);
-                        // print_container(error_guess_sub, "error_guess_sub", true);
-                            // xt::xarray<int> new_s = gf2_syndrome(&error_guess_sub, &H_sub);
-                            // std::cout << "new_s = \n" << new_s << std::endl;
+                    //     // xt::xarray<int> new_error_guess = gbpDecoder.decode(s_sub,p_initial);
+                    //     // print_container(error_guess_sub, "error_guess_sub", true);
+                    //         // xt::xarray<int> new_s = gf2_syndrome(&error_guess_sub, &H_sub);
+                    //         // std::cout << "new_s = \n" << new_s << std::endl;
 
-                            for (int i = 0; i < n_qi; i++)
-                            {
-                                if (error_guess_sub(i) == 1)
-                                {
-                                    from_gbp(qi(i)) = pauli;
-                                }
-                            }
-                            // print_container(from_gbp, "from_gbp", true);
-                            // print_container(error_guess, "error_guess b/f", true);
-                        }
-                    }
+                    //         for (int i = 0; i < n_qi; i++)
+                    //         {
+                    //             if (error_guess_sub(i) == 1)
+                    //             {
+                    //                 from_gbp(qi(i)) = pauli;
+                    //             }
+                    //         }
+                    //         // print_container(from_gbp, "from_gbp", true);
+                    //         // print_container(error_guess, "error_guess b/f", true);
+                    //     }
+                    // }
                     error_guess ^= from_gbp;
-                    if (print_gbp_details == true)
-                    {
-                        print_container(error_guess, "error_guess a/f gbp", true);
-                    }
+                    // if (print_gbp_details == true)
+                    // {
+                    //     print_container(error_guess, "error_guess a/f gbp", true);
+                    // }
                     
                 }
                 residual_error = y ^ error_guess;
@@ -477,7 +554,7 @@ int main(int argc, char **argv)
                     if (residual_error == x)
                     {
                         dec_sci++;
-                        if (did_gbp_pp)
+                        if (gbp_pp && did_gbp_pp)
                         {
                             dec_sci--;
                             dec_gbp_sci++;
@@ -489,7 +566,7 @@ int main(int argc, char **argv)
                         if (gf4_isEquiv(residual_error, H, n_c, n_q))
                         {
                             dec_sce++;
-                            if (did_gbp_pp)
+                            if (gbp_pp && did_gbp_pp)
                             {
                                 dec_sce--;
                                 dec_gbp_sce++;
@@ -499,7 +576,7 @@ int main(int argc, char **argv)
                         else
                         {
                             dec_ler++;
-                            if (did_gbp_pp)
+                            if (gbp_pp && did_gbp_pp)
                             {
                                 dec_ler--;
                                 dec_gbp_ler++;
@@ -511,7 +588,7 @@ int main(int argc, char **argv)
                 else
                 {
                     dec_fail++;
-                    if (did_gbp_pp) 
+                    if (gbp_pp && did_gbp_pp) 
                     {
                         dec_fail--;
                         dec_gbp_fail++;
@@ -519,11 +596,21 @@ int main(int argc, char **argv)
                     }
                     if (print_fails == true)
                     {
-                        std::cout << "XX fail XX\nXX";
-                        // print_container(y, "y", true);
+                        std::cout << "XX fail XX";
+                        print_container(y, "y", true);
                     }
                 }
             }
+            // if (n_errorsamples >= 1000)
+            // {
+            //     if (i_e % (int)(n_errorsamples * 0.05) == 0)
+            //     {
+            //         long double ber = (long double)(dec_ler + dec_fail) / (long double)i_e;
+            //         if (print_gbp_details) std::cout << "p\ti_e\tch_sc\tbp_sci\tbp_sce\tbp_ler\tbp_fail\tgbp_sci\tgbp_sce\tgbp_ler\tgb_fail\tber" << std::endl;
+            //         std::cout << p_error << "\t" << i_e << "\t" << ch_sc << "\t" << dec_sci << "\t" << dec_sce << "\t" << dec_ler << "\t" << dec_fail << "\t" << dec_gbp_sci << "\t" << dec_gbp_sce << "\t" << dec_gbp_ler << "\t" << dec_gbp_fail << "\t" << ber << std::endl;
+            //         OUTPUT_FILE << p_error<< "\t" << i_e << "\t" << ch_sc << "\t" << dec_sci << "\t" << dec_sce << "\t" << dec_ler << "\t" << dec_fail << "\t" << dec_gbp_sci << "\t" << dec_gbp_sce << "\t" << dec_gbp_ler << "\t" << dec_gbp_fail << "\t" << ber << std::endl;
+            //     }
+            // }
         }
         long double ber = (long double)(dec_ler + dec_fail) / (long double)n_errorsamples;
         if (print_gbp_details) std::cout << "p\tch_sc\tbp_sci\tbp_sce\tbp_ler\tbp_fail\tgbp_sci\tgbp_sce\tgbp_ler\tgb_fail\tber" << std::endl;

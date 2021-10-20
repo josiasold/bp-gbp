@@ -146,6 +146,7 @@ class RegionGraph
         
         lemon::ListDigraph::ArcMap< std::vector<variable_type> > message;
         lemon::ListDigraph::ArcMap< bool > edge_converged;
+        lemon::ListDigraph::NodeMap< bool > region_converged;
         lemon::ListDigraph::ArcMap<variable_type> message_base;
         
         lemon::ListDigraph::NodeMap<int> counting_number;
@@ -156,23 +157,28 @@ class RegionGraph
 
 
 
-        void construct_rg(int n_checks_per_r0);
+        void construct_rg(int n_checks_per_r0, int rg_type);
+        void construct_rg(int n_checks_per_r0, xt::xarray<int> check_list, int rg_type);
         // std::set< xt::xarray<int> ,xarrayCmp>
         std::unordered_set< xt::xarray<int>, xarrayHash > find_intersections(int level);
         void make_edges();
         void get_descendants_N_D();
         void get_ancestors_counting_numbers();
-        void print_regiongraph();
+        void print_regiongraph(std::string suffix);
 
     public:
-        RegionGraph(xt::xarray<int> H, int n_checks_per_r0);
+        RegionGraph(xt::xarray<int> H, int n_checks_per_r0, int rg_type);
+        RegionGraph(xt::xarray<int> H, int n_checks_per_r0, xt::xarray<int> check_list, int rg_type);
 
 };
 
 template <typename BPD>
 xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, xt::xarray<int> * s_sub, xt::xarray<int> * c_indices, xt::xarray<int> * q_indices, int pauli, bool print)
 {
-
+    if (print)
+    {
+        std::cout << "get_H_sub, pauli = " << pauli << "\n";
+    }
 
     unsigned int n_c = H.shape(0);
     unsigned int n_q = H.shape(1);
@@ -189,89 +195,54 @@ xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, 
 
     for (int e = 0 ; e < converged_cq.shape(0); e++)
     {
+        if (converged_cq(e) == false)
+        {
+            cq_not_converged.push_back(e);
+        }
+    }
+    xt::xarray<int> cq_edges_not_converged = xt::adapt(cq_not_converged);
+
+
+    for (int e = 0 ; e < converged_qc.shape(0); e++)
+    {
         if (converged_qc(e) == false)
         {
             qc_not_converged.push_back(e);
         }
-        // if (converged_cq(e) == false)
-        // {
-        //     cq_not_converged.push_back(e);
-        // }
     }
-
     xt::xarray<int> qc_edges_not_converged = xt::adapt(qc_not_converged);
-    // xt::xarray<int> cq_edges_not_converged = xt::adapt(cq_not_converged);
-    std::cout << "qc_edges_not_converged (" << qc_edges_not_converged.size() << ") = \n" << qc_edges_not_converged << "\n";
-    // std::cout << "cq_edges_not_converged (" << cq_edges_not_converged.size() << ") = \n" << cq_edges_not_converged << "\n";
-
-    xt::xarray<long double> abs_diffs = xt::abs(xt::diff(messages,1,1)); 
     
-    // int range;
-    // for (int m_i = messages.shape(1); m_i > 0; m_i--)
-    // {
-    //     if (xt::all(xt::sum(xt::view(abs_diffs,xt::all(),xt::range(m_i-10,m_i),0),1)) != 0)
-    //     {
-    //         range = m_i;
-    //         break;
-    //     }
-    // }
-
-   
-    xt::xarray<long double> abs_diffs_cq = xt::sum(xt::view(abs_diffs,xt::all(),xt::range(-10,_),0),1);
-    xt::xarray<long double> abs_diffs_qc = xt::sum(xt::view(abs_diffs,xt::all(),xt::range(-10,_),1),1);
 
     xt::xarray<int> abs_diffs_s = xt::abs(xt::diff(syndromes,1,0));
     xt::xarray<int> diffs_s_sum = xt::sum(xt::view(abs_diffs_s,xt::range(-20,_),xt::all()),0);
     xt::xarray<int> syndromes_changing = xt::from_indices(xt::argwhere(diffs_s_sum > 0));
 
-    if (print == true)
-    {
-        std::cout << "syndromes_changing = " << syndromes_changing << "\n  shape = " << xt::adapt(syndromes_changing.shape()) << std::endl;
-    }
+    // if (print == true)
+    // {
+        // xt::xarray<int> tmp = xt::flatten(syndromes_changing);
+        // std::cout << "syndromes_changing = " << tmp << "\n  |sc| = " << xt::adapt(tmp.shape()) << std::endl;
+    // }
 
-    xt::xarray<int> abs_diffs_hd = xt::abs(xt::diff(hard_decisions,1,0));
-    xt::xarray<int> diffs_hd_sum = xt::sum(xt::view(abs_diffs_hd,xt::range(2,_),xt::all()),0);
-    xt::xarray<int> hd_changing = xt::from_indices(xt::argwhere(diffs_hd_sum > 0));
-
-    std::ofstream OUTPUT_FILE;
-    OUTPUT_FILE.open("test.out");
-
-    OUTPUT_FILE << "edge\tabs_diffs_cq\tabs_diffs_qc \n";
-    for (int i = 0; i<abs_diffs_cq.size();i++)
-    {
-        OUTPUT_FILE  << i << "\t" << abs_diffs_cq(i)  << "\t" << abs_diffs_qc(i)   << "\n";
-    }
-
-    OUTPUT_FILE.close();
-
-
-    xt::xarray<int> edges_changing_qc= xt::from_indices(xt::argwhere(abs_diffs_qc > 1E-3));
-    
-    if (print == true)
-    {
-        std::cout << "# edges_changing_qc = " << xt::adapt(edges_changing_qc.shape())(0) << std::endl;
-    }
-
-    std::set<int> checks_involved; // = {192,193,194,195,196,197,198,199,200,201,202,203}; 
-    std::set<int> qubits_involved; // = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 
     // qubits and checks involved
-    // for (auto it = syndromes_changing.begin(); it != syndromes_changing.end(); ++it)
+    std::set<int> checks_involved;
+    std::set<int> qubits_involved;
+
+    // if (cq_edges_not_converged.size() > 0)
     // {
-    //     checks_involved.insert(*it);
-    //     xt::xarray<int>row_of_H = xt::row(H,*it);
-    //     xt::xarray<int> qubits_in_support = xt::flatten(xt::from_indices(xt::argwhere(row_of_H > 0)));
-    //     for (auto q = qubits_in_support.begin(); q != qubits_in_support.end(); ++q)
+    //     for (auto it = cq_edges_not_converged.begin(); it != cq_edges_not_converged.end(); ++it)
+    //     // for (auto it = edges_changing_qc.begin(); it != edges_changing_qc.end(); ++it)
     //     {
-    //         qubits_involved.insert(*q);
+    //         xt::xarray<int> cq = bpDecoder->get_check_and_qubit(*it);
+
+    //         if (H(cq(0),cq(1)) == pauli)
+    //         {
+    //             checks_involved.insert(cq(0));
+    //             qubits_involved.insert(cq(1));
+    //         }
+            
     //     }
     // }
-
-    // for (auto it = hd_changing.begin(); it != hd_changing.end(); ++it)
-    // {
-    //     qubits_involved.insert(*it);
-    // }
-
     if (qc_edges_not_converged.size() > 0)
     {
         for (auto it = qc_edges_not_converged.begin(); it != qc_edges_not_converged.end(); ++it)
@@ -287,7 +258,7 @@ xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, 
             
         }
     }
-    else
+    if ((cq_edges_not_converged.size() == 0) && (qc_edges_not_converged.size() == 0))
     {
          for (auto it = syndromes_changing.begin(); it != syndromes_changing.end(); ++it)
         {
@@ -301,18 +272,18 @@ xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, 
         }
     }
 
-    std::cout << "checks_involved (" << checks_involved.size() << ") : \n";
-    for (auto it = checks_involved.begin(); it != checks_involved.end(); ++it)
-    {
-        std::cout << *it << ",";
-    }
-    std::cout << std::endl;
-    std::cout << "qubits_involved (" << qubits_involved.size() << ") : \n";
-    for (auto it = qubits_involved.begin(); it != qubits_involved.end(); ++it)
-    {
-        std::cout << *it << ",";
-    }
-    std::cout << std::endl;
+    // std::cout << "checks_involved (" << checks_involved.size() << ") : \n";
+    // for (auto it = checks_involved.begin(); it != checks_involved.end(); ++it)
+    // {
+    //     std::cout << *it << ",";
+    // }
+    // std::cout << std::endl;
+    // std::cout << "qubits_involved (" << qubits_involved.size() << ") : \n";
+    // for (auto it = qubits_involved.begin(); it != qubits_involved.end(); ++it)
+    // {
+    //     std::cout << *it << ",";
+    // }
+    // std::cout << std::endl;
 
     std::vector<int> ci_v(checks_involved.begin(), checks_involved.end()); 
     std::vector<int> qi_v(qubits_involved.begin(), qubits_involved.end()); 

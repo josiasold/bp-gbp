@@ -34,12 +34,12 @@ class BpDecoder
 
     private:
         int max_iterations;
+
         xt::xarray<int> H;
         int n_q;
         int n_c;
         int n_edges;
 
-        xt::xarray<long double> p_initial;
         bool is_initialized;
 
         lemon::ListBpGraph g;
@@ -52,6 +52,9 @@ class BpDecoder
         lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_cq;
         lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_qc;
 
+        lemon::ListBpGraph::EdgeMap< bool > erased;
+        bool erasure_channel;
+        
         lemon::ListBpGraph::EdgeMap< bool > converged_qc;
         lemon::ListBpGraph::EdgeMap< bool > converged_cq;
 
@@ -69,8 +72,24 @@ class BpDecoder
        
 
         void check_to_bit(xt::xarray<int> * s_0, long double w, int iteration);
+        void check_to_bit_fractional(xt::xarray<int> * s_0, long double w, long double alpha, int iteration);
         void bit_to_check(long double w, int iteration);
+        void bit_to_check_memory(long double w, int iteration, long double alpha);
+        void bit_to_check_urw(long double w, int iteration, long double alpha);
+
+        void bit_serial_update(xt::xarray<int> * s_0, long double w, int iteration);
+        
+        void bit_serial_update_urw(xt::xarray<int> * s_0, long double w, long double alpha, int iteration);
+
+        void check_serial_update(xt::xarray<int> * s_0, long double w, int iteration);
+
+        void check_update(lemon::ListBpGraph::RedNode& check, int iteration, xt::xarray<int>* s_0, long double w);
+        void bit_update(lemon::ListBpGraph::RedNode& check, int iteration, long double w);
+
         void marginals_and_hard_decision(int iteration);
+        void marginals_and_hard_decision_serial(int iteration);
+        void marginals_and_hard_decision_fractional(int iteration, long double alpha);
+        void marginals_and_hard_decision_urw(int iteration, long double alpha);
 
         void calculate_free_energy(xt::xarray<int> * s_0,int iteration);
 
@@ -87,9 +106,12 @@ class BpDecoder
     public:
         BpDecoder(xt::xarray<int> H);
 
+        xt::xarray<long double> p_initial;
+
         void initialize_bp(xt::xarray<long double> p_init, int max_iter); 
         void initialize_bp();
-        xt::xarray<int> decode_bp(xt::xarray<int> s_0, long double w);
+        void initialize_erasures(xt::xarray<int> * erasures);
+        xt::xarray<int> decode_bp(xt::xarray<int> s_0, long double w, long double alpha, int type_bp, bool return_if_success, bool only_non_converged);
 
         xt::xarray<long double> get_marginals();
         xt::xarray<long double> get_messages();
@@ -101,7 +123,7 @@ class BpDecoder
         xt::xarray<long double> get_free_energy(){return free_energy;};
 
         xt::xarray<int> get_check_and_qubit(int edge);
-
+        int took_iterations;
 };
 
 #endif

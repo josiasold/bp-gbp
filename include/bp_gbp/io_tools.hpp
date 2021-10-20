@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <iostream>
 
+#include <string>
+
 #include <bp_gbp/la_tools.hpp>
 
 template <typename T>
@@ -48,5 +50,8 @@ void print_container(T &inp, const char * description, bool weight)
     std::cout << std::endl;
 }
 
+
+// https://stackoverflow.com/questions/15006269/c-get-substring-before-a-certain-char
+std::string strip_(std::string const& s);
 
 #endif

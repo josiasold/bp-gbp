@@ -1,16 +1,24 @@
 #include <bp_gbp/constructor_gbp.hpp>
 
-RegionGraph::RegionGraph(xt::xarray<int> H, int n_checks_per_r0) : H(H), region_qubits(rg), region_checks(rg), region_level(rg), belief(rg), belief_base(rg), vars_to_marginalize(rg),dim_of_vars_to_marg(rg), message(rg), edge_converged(rg), message_base(rg), N(rg), D(rg),counting_number(rg), ancestors(rg), descendants(rg)
+RegionGraph::RegionGraph(xt::xarray<int> H, int n_checks_per_r0, int rg_type) : H(H), region_qubits(rg), region_checks(rg), region_level(rg), belief(rg), belief_base(rg), vars_to_marginalize(rg),dim_of_vars_to_marg(rg), message(rg), edge_converged(rg), region_converged(rg), message_base(rg), N(rg), D(rg),counting_number(rg), ancestors(rg), descendants(rg)
 {
     n_c = H.shape(0);
     n_q = H.shape(1);
     checks = xt::arange<int>(n_c);
     qubits = xt::arange<int>(n_q);
-    construct_rg(n_checks_per_r0);
+    construct_rg(n_checks_per_r0,rg_type);
 }
 
+RegionGraph::RegionGraph(xt::xarray<int> H, int n_checks_per_r0, xt::xarray<int> check_list, int rg_type) : H(H), region_qubits(rg), region_checks(rg), region_level(rg), belief(rg), belief_base(rg), vars_to_marginalize(rg),dim_of_vars_to_marg(rg), message(rg), edge_converged(rg), region_converged(rg), message_base(rg), N(rg), D(rg),counting_number(rg), ancestors(rg), descendants(rg)
+{
+    n_c = H.shape(0);
+    n_q = H.shape(1);
+    checks = xt::arange<int>(n_c);
+    qubits = xt::arange<int>(n_q);
+    construct_rg(n_checks_per_r0,check_list,rg_type);
+}
 
-void RegionGraph::construct_rg(int n_checks_per_r0)
+void RegionGraph::construct_rg(int n_checks_per_r0, int rg_type)
 {
     xt::random::seed(time(NULL));
     // R_0 (basic)
@@ -55,17 +63,41 @@ void RegionGraph::construct_rg(int n_checks_per_r0)
     // R_0 (4 checks per region)
     // xt::xarray<int> check_list = {0,4,6,1,7,10,2,8,9,3,5,11};
     // xt::xarray<int> check_list = {3,5,6,0,1,2,7,9,10,4,8,11};
-    // xt::xarray<int> check_list = {4,1,11,5,6,7,8,3,9,0,10,2};
-    n_checks_per_r0 = 4;
-    xt::xarray<int> check_list = xt::arange<int>(n_c);
-    // xt::random::shuffle(check_list);
 
-    // xt::xarray<int> check_list = {5,8,9,7,2,6,11,10,0,4,1,3};
+    // xt::xarray<int> check_list = {0,5,1,6,2,7,3,8,4,9,10,15,11,16,12,17,13,18,14,19};
+    // n_checks_per_r0 = 4;
+    xt::xarray<int> check_list = xt::arange<int>(n_c);
+    // // xt::xarray<int> check_list = xt::zeros<int> ({n_c});
+    
+    
+    if (rg_type == 0)
+        xt::random::shuffle(check_list);
+    else if (rg_type == 2)
+    {
+        int dist = (int)((1 + sqrt(1+4*n_c))/2);
+        // std::cout << "dist = " << dist << "\n";
+        int i = 0;
+        int j = 0;
+
+        for (int c = 0; c < n_c; c++)
+        {
+            check_list(c) = j+i*dist;
+            i++;
+            if (i % (dist-1) == 0)
+            {
+                j++;
+                i = 0;
+            }
+        }
+    }
+    // // std::cout << "check_list = " << check_list << "\n";
+
+    // xt::xarray<int> check_list = {2,11,5,10,0,3,8,1,4,6,7,9};
 
     std::vector<int> used_checks;
 
     int n_r0 =  ceil((double)n_c / (double) n_checks_per_r0);
-    std::cout << "n_r0 = " << n_r0 << "\n";
+    // std::cout << "n_r0 = " << n_r0 << "\n";
     int c_p = 0;
     for (int i_r0 = 0; i_r0 < n_r0; i_r0++)
     {
@@ -88,8 +120,8 @@ void RegionGraph::construct_rg(int n_checks_per_r0)
         region_checks[new_region] = xt::adapt(checks_in_r0);
         std::vector<double> qir(qubits_in_r0.begin(), qubits_in_r0.end());
         region_qubits[new_region] = xt::adapt(qir);
-        std::cout << "region_checks[new_region] = " << region_checks[new_region] << "\n";
-        std::cout << "region_qubits[new_region] = " << region_qubits[new_region] << "\n";
+        // std::cout << "region_checks[new_region] = " << region_checks[new_region] << "\n";
+        // std::cout << "region_qubits[new_region] = " << region_qubits[new_region] << "\n";
         region_level[new_region] = 0;
     }
 
@@ -186,7 +218,143 @@ void RegionGraph::construct_rg(int n_checks_per_r0)
 
     get_ancestors_counting_numbers();
 
-    print_regiongraph();
+    std::string suffix = std::to_string(n_checks_per_r0);
+    print_regiongraph(suffix);
+
+}
+
+void RegionGraph::construct_rg(int n_checks_per_r0, xt::xarray<int> check_list, int rg_type)
+{
+    xt::random::seed(time(NULL));
+    // R_0 (basic)
+    // std::cout << "check_list = " << check_list << "\n";
+
+    std::vector<int> used_checks;
+
+    int n_r0 =  ceil((double)n_c / (double) n_checks_per_r0);
+    // std::cout << "n_r0 = " << n_r0 << "\n";
+    int c_p = 0;
+    for (int i_r0 = 0; i_r0 < n_r0; i_r0++)
+    {
+        lemon::ListDigraph::Node new_region = rg.addNode();
+        std::vector<int> checks_in_r0;
+        std::set<int> qubits_in_r0;
+        for (int c = c_p; c < c_p + n_checks_per_r0; c++)
+        {
+            int c0 = check_list(c);
+            checks_in_r0.push_back(c0);
+            xt::xarray<int>row = xt::row(H,c0);
+            xt::xarray<int> qubits = xt::flatten(xt::from_indices(xt::argwhere(row > 0)));
+            for (auto q = qubits.begin(); q != qubits.end(); ++q)
+            {
+                qubits_in_r0.insert(*q);
+            }
+            if (c == n_c-1) break;
+        }
+        c_p+=n_checks_per_r0;
+        region_checks[new_region] = xt::adapt(checks_in_r0);
+        std::vector<double> qir(qubits_in_r0.begin(), qubits_in_r0.end());
+        region_qubits[new_region] = xt::adapt(qir);
+        // std::cout << "region_checks[new_region] = " << region_checks[new_region] << "\n";
+        // std::cout << "region_qubits[new_region] = " << region_qubits[new_region] << "\n";
+        region_level[new_region] = 0;
+    }
+
+
+
+    // for (int c = 0; c < checks.size()-3; c+=4)
+    // {
+    //     int c0 = check_list(c);
+    //     int c1 = check_list(c+1);
+    //     int c2 = check_list(c+2);
+    //     int c3 = check_list(c+3);
+    //     lemon::ListDigraph::Node new_region = rg.addNode();
+        
+    //     region_checks[new_region] = xt::xarray<int>{c0,c1,c2,c3};
+    //     // std::cout << "R_0: region_checks["<< rg.id(new_region) << "] = " << region_checks[new_region] << "\n";
+    //     xt::xarray<int>row_0 = xt::row(H,c0);
+    //     xt::xarray<int>row_1 = xt::row(H,c1);
+    //     xt::xarray<int>row_2 = xt::row(H,c2);
+    //     xt::xarray<int>row_3 = xt::row(H,c3);
+    //     xt::xarray<int> qubits_0 = xt::flatten(xt::from_indices(xt::argwhere(row_0 > 0)));
+    //     xt::xarray<int> qubits_1 = xt::flatten(xt::from_indices(xt::argwhere(row_1 > 0)));
+    //     xt::xarray<int> qubits_2 = xt::flatten(xt::from_indices(xt::argwhere(row_2 > 0)));
+    //     xt::xarray<int> qubits_3 = xt::flatten(xt::from_indices(xt::argwhere(row_3 > 0)));
+
+    //     region_qubits[new_region] = union1d(union1d(union1d(qubits_0,qubits_1),qubits_2),qubits_3);
+    //     region_level[new_region] = 0;
+    // }
+
+
+
+    // other regions
+    bool done = false;
+    int current_level = 1;
+    xt::xarray<int> single_qubits_used = xt::arange<int>(n_q);
+    
+    while (done == false)
+    {
+        // std::cout << "current level = " << current_level << std::endl;
+        // std::set< xt::xarray<int> ,xarrayCmp>
+        std::unordered_set< xt::xarray<int>, xarrayHash > intersections = find_intersections(current_level-1);
+        // std::cout << "intersections = ";
+        // for (auto it = intersections.begin(); it != intersections.end(); ++it)
+        // {
+        //     std::cout << *it << " ";
+        // }
+        // std::cout << std::endl;
+        if (intersections.size() > 0)
+        {
+            for (auto it = intersections.begin(); it != intersections.end(); ++it)
+            {
+                // std::cout << "*it = " << *it << std::endl;
+                lemon::ListDigraph::Node new_region = rg.addNode();
+                region_checks[new_region] = xt::empty<int>({0});
+                region_qubits[new_region] = *it;
+                region_level[new_region] = current_level;
+                if ((*it).size() == 1)
+                {
+                    single_qubits_used(it->at(0)) = -1;
+                }
+            }
+            current_level++;
+        }
+        else
+        {
+            done = true;
+        }
+    }
+
+    max_level = current_level;
+
+    // not used variables (?)
+    // for (auto it = single_qubits_used.begin(); it != single_qubits_used.end(); ++it)
+    // {
+    //     if (*it != -1)
+    //     {
+    //         lemon::ListDigraph::Node new_region = rg.addNode();
+    //         region_checks[new_region] = -1;
+    //         xt::xarray<int> q = xt::ones<int>({1})*(*it);
+    //         region_qubits[new_region] = q;
+    //         region_level[new_region] = current_level;
+    //     }
+    // }
+
+    // edges
+    make_edges();
+
+    n_regions=0;
+    for (lemon::ListDigraph::NodeIt r(rg); r!=lemon::INVALID; ++r) ++n_regions;
+
+    n_edges=0;
+    for (lemon::ListDigraph::ArcIt e(rg); e!=lemon::INVALID; ++e) ++n_edges;
+
+    get_descendants_N_D();
+
+    get_ancestors_counting_numbers();
+
+    std::string suffix = std::to_string(n_checks_per_r0);
+    print_regiongraph(suffix);
 
 }
 
@@ -291,7 +459,11 @@ void RegionGraph::get_descendants_N_D()
             auto condition_I_D = xt::isin(rg.id(rg.source(e2)),xt::setdiff1d(E_P,E_R));
             auto condition_J_D = xt::isin(rg.id(rg.target(e2)),E_R);
 
-            if ((condition_I_D() && condition_J_D()) && (e2 != edge))
+            // if ((condition_I_D() && condition_J_D()) && (e2 != edge))
+            // {
+            //     d.push_back(rg.id(e2));
+            // }
+            if (condition_I_D() && condition_J_D())
             {
                 d.push_back(rg.id(e2));
             }
@@ -351,7 +523,7 @@ void RegionGraph::get_ancestors_counting_numbers()
 
 }
 
-void RegionGraph::print_regiongraph()
+void RegionGraph::print_regiongraph(std::string suffix)
 {
     typedef lemon::dim2::Point<int> Point;
     lemon::ListDigraph::NodeMap<Point>coords(rg);
@@ -370,10 +542,12 @@ void RegionGraph::print_regiongraph()
         std::stringstream nt;
         nt << rg.id(region) << " | " << region_checks[region] << " | " << region_qubits[region];
         node_texts[region] =  nt.str();
-        std::cout << nt.str() << "\n";
+        // std::cout << nt.str() << "\n";
     }
 
-    lemon::graphToEps(rg,"region_graph.eps")
+    std::string name = "region_graph_" + suffix +".eps";
+
+    lemon::graphToEps(rg,name)
         .coords(coords)
         .arcWidths(widths)
         .nodeTexts(node_texts).nodeTextSize(1).nodeShapes(shapes)
