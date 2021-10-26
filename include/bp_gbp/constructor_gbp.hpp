@@ -35,6 +35,7 @@
 
 using namespace xt::placeholders;
 
+// implements intersection and union of 1d  xtensor xexpresisons based on setdiff1d from <xtensor/xsort.hpp>
 template <class E1, class E2>
 inline auto intersect1d(const xt::xexpression<E1>& ar1, const xt::xexpression<E2>& ar2)
 {
@@ -85,24 +86,7 @@ inline auto union1d(const xt::xexpression<E1>& ar1, const xt::xexpression<E2>& a
     return result;
 };
 
-// struct xarrayCmp
-// {
-//     public:
-//         bool operator()(const xt::xarray<int> & lhs, const xt::xarray<int> & rhs)
-//         {
-//             // xt::xarray<int> setdiff = xt::setdiff1d(lhs,rhs);
-//             if (xt::all(xt::equal(lhs,rhs)))
-//             {
-//                 return false;
-//             }
-//             else
-//             {
-//                 return true;
-//             }
-//             // return xt::equal(lhs,rhs)();
-//         };
-// };
-
+// Hash for unordered set of xarrays (intersections)
 struct xarrayHash 
 {
     public:
@@ -157,14 +141,14 @@ class RegionGraph
 
 
 
-        void construct_rg(int n_checks_per_r0, int rg_type);
-        void construct_rg(int n_checks_per_r0, xt::xarray<int> check_list, int rg_type);
-        // std::set< xt::xarray<int> ,xarrayCmp>
+        void construct_rg(int n_checks_per_r0, int rg_type, bool save_rg);
+        void construct_rg(int n_checks_per_r0, xt::xarray<int> check_list, int rg_type, bool save_rg);
+
         std::unordered_set< xt::xarray<int>, xarrayHash > find_intersections(int level);
         void make_edges();
         void get_descendants_N_D();
         void get_ancestors_counting_numbers();
-        void print_regiongraph(std::string suffix);
+        void save_regiongraph(std::string suffix);
 
     public:
         RegionGraph(xt::xarray<int> H, int n_checks_per_r0, int rg_type);
@@ -172,6 +156,7 @@ class RegionGraph
 
 };
 
+// constructs sub-parity check matrix of one pauli type based on non-converged edges
 template <typename BPD>
 xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, xt::xarray<int> * s_sub, xt::xarray<int> * c_indices, xt::xarray<int> * q_indices, int pauli, bool print)
 {
@@ -217,36 +202,15 @@ xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, 
     xt::xarray<int> diffs_s_sum = xt::sum(xt::view(abs_diffs_s,xt::range(-20,_),xt::all()),0);
     xt::xarray<int> syndromes_changing = xt::from_indices(xt::argwhere(diffs_s_sum > 0));
 
-    // if (print == true)
-    // {
-        // xt::xarray<int> tmp = xt::flatten(syndromes_changing);
-        // std::cout << "syndromes_changing = " << tmp << "\n  |sc| = " << xt::adapt(tmp.shape()) << std::endl;
-    // }
-
 
     // qubits and checks involved
     std::set<int> checks_involved;
     std::set<int> qubits_involved;
 
-    // if (cq_edges_not_converged.size() > 0)
-    // {
-    //     for (auto it = cq_edges_not_converged.begin(); it != cq_edges_not_converged.end(); ++it)
-    //     // for (auto it = edges_changing_qc.begin(); it != edges_changing_qc.end(); ++it)
-    //     {
-    //         xt::xarray<int> cq = bpDecoder->get_check_and_qubit(*it);
 
-    //         if (H(cq(0),cq(1)) == pauli)
-    //         {
-    //             checks_involved.insert(cq(0));
-    //             qubits_involved.insert(cq(1));
-    //         }
-            
-    //     }
-    // }
     if (qc_edges_not_converged.size() > 0)
     {
         for (auto it = qc_edges_not_converged.begin(); it != qc_edges_not_converged.end(); ++it)
-        // for (auto it = edges_changing_qc.begin(); it != edges_changing_qc.end(); ++it)
         {
             xt::xarray<int> cq = bpDecoder->get_check_and_qubit(*it);
 
@@ -272,19 +236,6 @@ xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, 
         }
     }
 
-    // std::cout << "checks_involved (" << checks_involved.size() << ") : \n";
-    // for (auto it = checks_involved.begin(); it != checks_involved.end(); ++it)
-    // {
-    //     std::cout << *it << ",";
-    // }
-    // std::cout << std::endl;
-    // std::cout << "qubits_involved (" << qubits_involved.size() << ") : \n";
-    // for (auto it = qubits_involved.begin(); it != qubits_involved.end(); ++it)
-    // {
-    //     std::cout << *it << ",";
-    // }
-    // std::cout << std::endl;
-
     std::vector<int> ci_v(checks_involved.begin(), checks_involved.end()); 
     std::vector<int> qi_v(qubits_involved.begin(), qubits_involved.end()); 
 
@@ -302,7 +253,6 @@ xt::xarray<int> get_H_sub(BPD* bpDecoder, xt::xarray<int> H, xt::xarray<int> s, 
 
     *c_indices = ci;
     *q_indices = qi;
-
 
     // H_sub
     xt::xarray<int> H_sub_c;

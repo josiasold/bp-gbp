@@ -5,7 +5,7 @@ message(STATUS "CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
 message(STATUS "CMAKE_PREFIX_PATH: ${CMAKE_PREFIX_PATH}")
 message(STATUS "HEADER_LIST: ${HEADER_LIST}")
 
-add_library(bp_gbp decoder_bp2.cpp decoder_bp_kuolai.cpp decoder_bp_klm.cpp decoder_bp.cpp constructor_gbp.cpp decoder_gbp.cpp error_channels.cpp io_tools.cpp la_tools.cpp timing.cpp ${HEADER_LIST})
+add_library(bp_gbp  decoder_bp.cpp decoder_bp2.cpp decoder_bp_kuolai.cpp constructor_gbp.cpp decoder_gbp.cpp error_channels.cpp io_tools.cpp la_tools.cpp timing.cpp ${HEADER_LIST})
 
 target_include_directories(bp_gbp PUBLIC ../include)
 target_include_directories(bp_gbp PUBLIC ../lib)
@@ -38,7 +38,6 @@ if (NOT LEMON)
 endif ()
 
 #message(STATUS "GMP: ${GMP_INCLUDE_DIRS}")
-
 
 set(XTENSOR_USE_XSIMD 1)
 

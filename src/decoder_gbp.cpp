@@ -118,18 +118,6 @@ GbpDecoder::GbpDecoder(xt::xarray<int> H, int max_iterations,int n_checks_per_r0
         }
 
         RG.dim_of_vars_to_marg[edge] = dim_of_vars_to_marg;
-
-
-        //   std::vector< xt::xarray<long double> > va(max_iterations);
-        //   RG.message[edge] = va;
-        //   for (int iteration = 0; iteration < max_iterations; iteration++)
-        //   {
-        //       RG.message[edge][iteration] = xt::ones<long double>({2});
-        //   }
-
-        // std::cout << "target qubit = " << RG.region_qubits[RG.rg.target(edge)](0) << " edge = " << RG.rg.id(edge) << std::endl; 
-
- 
     }
 
   marginals.resize(max_iterations);
@@ -182,8 +170,6 @@ GbpDecoder::GbpDecoder(xt::xarray<int> H, int max_iterations,int n_checks_per_r0
        
        variable_type message_dummy(md,coord_map,dim_list);
 
-        //    std::cout << "message_dummy = \n" << message_dummy << "\n";
-
         std::vector<variable_type> messages_iter(max_iterations+1);
         RG.message[edge]=messages_iter;
         for (int i = 0; i<max_iterations+1;i++)
@@ -208,7 +194,7 @@ GbpDecoder::GbpDecoder(xt::xarray<int> H, int max_iterations,int n_checks_per_r0
         md.fill(1.0);
        
        variable_type message_base_dummy(md,coord_map_base,dim_list_base);
-        //    std::cout << "message_base_dummy = \n" << message_base_dummy << "\n";
+
        
         RG.message_base[edge] = message_base_dummy;
 
@@ -235,15 +221,7 @@ GbpDecoder::GbpDecoder(xt::xarray<int> H, int max_iterations,int n_checks_per_r0
             j++;
         }
 
-        RG.dim_of_vars_to_marg[edge] = dim_of_vars_to_marg;
-
-        //   std::vector< xt::xarray<long double> > va(max_iterations);
-        //   RG.message[edge] = va;
-        //   for (int iteration = 0; iteration < max_iterations; iteration++)
-        //   {
-        //       RG.message[edge][iteration] = xt::ones<long double>({2});
-        //   }
- 
+        RG.dim_of_vars_to_marg[edge] = dim_of_vars_to_marg; 
     }
 
   marginals.resize(max_iterations);
@@ -293,9 +271,7 @@ void GbpDecoder::fill_c_factors()
     for (int c = 0; c < n_c; c++)
     {
         xt::xarray<int> qubits_in_support = xt::from_indices(xt::nonzero(xt::row(H,c)));
-        // std::cout << "qubits_in_support = " << qubits_in_support << "\n";
         int n_qubits_in_support = qubits_in_support.size();
-        // std::cout << "n_qubits_in_support = " << n_qubits_in_support << "\n";
 
         variable_type::coordinate_map coord_map;
         dimension_type::label_list dim_list = {};
@@ -319,24 +295,14 @@ void GbpDecoder::fill_c_factors()
 
 
         std::vector<int> v1{0, 1};
-        const int nv = 7;
+        const int nv = 7; // maximum degree of checks currently supported
 
-        // std::vector< std::vector<int> > v2 = product({v1,v1});
-
-        // for (int i = 0; i < 4; i++)
-        // {
-        //     v2 = product({v2,v2});
-        // }
-        
-        // std::cout << "v2 = " << "\n";
-        // print(v2);
 
         for (auto &&t : iter::product<nv>(v1))
         {
             std::valarray<int> indices(n_qubits_in_support);
             indices = to_valarray(t);
-            // std::cout << "indices = " << "\n";
-            // for (auto i: indices) std::cout << i << ' ';
+            
             std::valarray<int> bar = indices[std::slice(0, n_qubits_in_support, 1)];
             std::vector<int> shape = {n_qubits_in_support};
             std::vector<size_t> fo(bar.size());
@@ -355,12 +321,9 @@ void GbpDecoder::fill_c_factors()
         variable_type c_factor_0(all_zeros, coord_map, dim_list);
         variable_type c_factor_1(all_ones, coord_map, dim_list);
 
-        // std::cout << "c = " << c << "\nc_factor_0 = \n" << c_factor_0 << "\n";
-
         c_factors[0][c] = c_factor_0;
         c_factors[1][c] = c_factor_1;
 
-        // std::cout << "check " << c << "  c_factors[0][c] = \n" << c_factors[0][c] << "\n";
     }
 }
 
@@ -369,7 +332,7 @@ void GbpDecoder::prepare_messages(const xt::xarray<int> *s_0)
     for (lemon::ListDigraph::ArcIt edge(RG.rg); edge != lemon::INVALID; ++edge)
     {
         int n_source_qubits = RG.region_qubits[RG.rg.source(edge)].size();
-        // std::cout << "edge " << RG.rg.id(edge) << " n_source_qubits = " << n_source_qubits << "\n";
+
         for (int q = 0; q < n_source_qubits; q++)
         {
             int qubit = RG.region_qubits[RG.rg.source(edge)](q);
@@ -382,7 +345,6 @@ void GbpDecoder::prepare_messages(const xt::xarray<int> *s_0)
             int check = RG.region_checks[RG.rg.source(edge)](c);
             RG.message_base[edge] *= c_factors[s_0->at(check)][check];
         }
-        // std::cout << "edge " << RG.rg.id(edge) << " message_base = \n" << RG.message_base[edge] << "\n";
     }
 }
 
@@ -413,70 +375,41 @@ xt::xarray<int> GbpDecoder::decode(xt::xarray<int> s_0,xt::xarray<long double> p
 {
     lemon::mapFill(RG.rg,RG.edge_converged,false);
     lemon::mapFill(RG.rg,RG.region_converged,false);
-    // std::cout << "0\n";
+    
     fill_q_factors(p_initial);
-    // std::cout << "1\n";
     fill_c_factors();
-    // std::cout << "2\n";
     prepare_messages(&s_0);
-    // std::cout << "3\n";
     prepare_beliefs(&s_0);
-    // std::cout << "4\n";
     int hd_i_to_return = 0;
 
     for (int iteration = 1; iteration < max_iterations; iteration++)
     {
-        // update_messages(&s_0,p_initial,w_gbp,iteration);
-
-        // update_beliefs(&s_0,iteration);
-
         if (type_gbp == 0)
         {
-            update_messages(&s_0,p_initial,w_gbp,iteration);
+            update_messages(&s_0,p_initial,w_gbp,iteration);//update messages by using YFMs formula
             update_beliefs(&s_0,iteration);
-            get_marginals_and_hard_dec(iteration);
+            get_marginals_and_hard_dec(iteration); // hard decision as average of single qubit marginals
         }
         
         else if (type_gbp == 1)
         {
-            update_messages(&s_0,p_initial,w_gbp,iteration);
+            update_messages(&s_0,p_initial,w_gbp,iteration);//update messages by using YFMs formula
             update_beliefs(&s_0,iteration);
-            get_marginals_and_hard_dec_2(iteration);
+            get_marginals_and_hard_dec_2(iteration); // hard decision as argmax of superregion marginals
         }
         else if (type_gbp == 2)
         {
-            // Timer t;
-            update_messages_2(&s_0,p_initial,w_gbp,iteration);
-            // std::cout << "update_messages_2: t = " << t.elapsed() << "s\n";
-            // t.reset();
-            // std::cout << "0\n";
+
+            update_messages_2(&s_0,p_initial,w_gbp,iteration); //update messages by marginalization of belief
             update_beliefs(&s_0,iteration);
-            // std::cout << "update_beliefs:   t = " << t.elapsed() << "s\n";
-            // t.reset();
-            // std::cout << "2\n";
-            get_marginals_and_hard_dec_2(iteration);
-            // std::cout << "marg_hard_dec_2:   t = " << t.elapsed() << "s\n";
-            // t.reset();
-        }
-        else if (type_gbp == -1)
-        {
-            update_messages(&s_0,p_initial,w_gbp,iteration);
-            update_beliefs(&s_0,iteration);
-            overall_belief(iteration,s_0);
+            get_marginals_and_hard_dec_2(iteration); // hard decision as argmax of superregion marginals
         }
 
-        // std::cout << "2\n";
-
-        // xt::xarray<int> s = xt::zeros<int>({n_c});
         xt::xarray<int> hd  = xt::row(hard_decisions,iteration);
 
         xt::xarray<int> s = gf2_syndrome(&hd, &H);
         xt::row(syndromes,iteration) = s^s_0;
-        // gf2_syndrome(&s, &hd, &H);
 
-        // xt::xarray<int> res_s = s^s_0;
-        // print_container(hd,"hd",true);
-        // print_container(res_s,"res_s",true);
         calculate_free_energy(iteration);
 
 
@@ -607,16 +540,12 @@ void GbpDecoder::update_messages_2(const xt::xarray<int> *s_0, xt::xarray<long d
 
 
             variable_type update_message = RG.message[edge][iteration-1];
-            //  std::cout << "edge " << RG.rg.id(edge) << " \n update_message b/f = \n" << update_message << "\n";
             update_message.data() *= xt::sum(belief_source.data(), RG.dim_of_vars_to_marg[edge]);
-            // std::cout << " \n update_message a/f = \n" << update_message << "\n";
 
             update_message /= belief_target;
 
             // normalize update_message
             update_message.data() /= xt::sum(update_message.data());
-
-            // std::cout << "edge " << RG.rg.id(edge) << " update_message a/f = \n" << update_message << "\n";
 
 
             RG.message[edge][iteration] = (1-w_gbp) * RG.message[edge][iteration-1] + w_gbp * update_message;
@@ -624,13 +553,7 @@ void GbpDecoder::update_messages_2(const xt::xarray<int> *s_0, xt::xarray<long d
             if (xt::allclose(RG.message[edge][iteration].data().value(),RG.message[edge][iteration-1].data().value()),1e-100,1e-100)
             {
                 RG.edge_converged[edge] = true;
-                // std::cout << "edge " << RG.rg.id(edge) << " converged\n";
             }
-        // }
-        // else
-        // {
-        //      RG.message[edge][iteration] = RG.message[edge][iteration-1];
-        // }
     }
 
 }
@@ -641,22 +564,17 @@ void GbpDecoder::update_beliefs(const xt::xarray<int> *s_0,int iteration)
     for (lemon::ListDigraph::NodeIt region(RG.rg); region != lemon::INVALID; ++region)
     {
         // if (RG.region_converged[region] == false)
-        // {
-        // Timer t;
             xt::xarray<int> i_region = {RG.rg.id(region)};
             xt::xarray<int> E_R = union1d(i_region,RG.descendants[region]);
 
             // local factors are already calculated in belief_base
             variable_type bf = RG.belief_base[region];
-            // std::cout << "part 1:   t = " << t.elapsed() << "s\n";
-            // t.reset();
+
             // messages from parents
             for (lemon::ListDigraph::InArcIt edge_from_parent(RG.rg,region); edge_from_parent != lemon::INVALID; ++edge_from_parent)
             {
                 bf *= RG.message[edge_from_parent][iteration];
             }
-            // std::cout << "part 2:   t = " << t.elapsed() << "s\n";
-            // t.reset();
 
             // messages into descendants from other parents
             for (auto d = RG.descendants[region].begin(); d != RG.descendants[region].end(); ++d)
@@ -671,12 +589,6 @@ void GbpDecoder::update_beliefs(const xt::xarray<int> *s_0,int iteration)
                     }
                 }
             }
-            // std::cout << "part 3:   t = " << t.elapsed() << "s\n";
-            // t.reset();
-
-            // auto tmp = bf.data()/xt::sum(bf.data());
-            // bf.data() = tmp;
-
             // bf.data() /= xt::sum(bf.data());
 
             RG.belief[region][iteration] = bf;
@@ -684,61 +596,11 @@ void GbpDecoder::update_beliefs(const xt::xarray<int> *s_0,int iteration)
             if (xt::allclose(bf.data().value(),bf.data().value()),1e-100,1e-100)
             {
                 RG.region_converged[region] = true;
-                // std::cout << "edge " << RG.rg.id(edge) << " converged\n";
             }
-        // }
-        // else
-        // {
-        //     RG.belief[region][iteration] = RG.belief[region][iteration-1];
-        // }
-        // std::cout << "part 4:   t = " << t.elapsed() << "s\n";
-        // t.reset();
+
     }
 }
 
-void GbpDecoder::overall_belief(int iteration, xt::xarray<int> s_0)
-{
-    auto start = std::chrono::high_resolution_clock::now();
-    // construct overall belief dummy
-    variable_type::coordinate_map coord_map;
-    dimension_type::label_list dim_list = {};
-    
-    for (int q = 0; q < n_q; q++)
-    {
-        std::string qubit_name = std::to_string(q);
-        const char *cstr = qubit_name.c_str();
-        coord_map[cstr] = xf::axis({"0", "1"});
-        dim_list.push_back(cstr);
-    }
-    std::vector<int> shape(n_q, 2);
-    xt::xarray<long double> obf;
-    obf.resize(shape);
-    obf.fill(1.0);
-    
-    variable_type overall_belief(obf,coord_map,dim_list);
-
-    auto finish = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = finish - start;
-    std::cout << "t(construction)= " << elapsed.count() << " s\n";
-
-    start = std::chrono::high_resolution_clock::now();
-
-    for (lemon::ListDigraph::NodeIt region(RG.rg); region != lemon::INVALID; ++region)
-    {
-        auto argwhere_belief = xt::argwhere(xt::isclose( xf::pow(RG.belief[region][iteration],RG.counting_number[region]).data().value(),xt::amax( xf::pow(RG.belief[region][iteration],RG.counting_number[region]).data().value())));
-        xt::xarray<int> candidates_b =  xt::from_indices(argwhere_belief);
-
-        std::cout << "RG.belief[region = " << RG.rg.id(region) << "][iteration] = \n" << candidates_b << "\n RG.counting_number[region] = \n" << RG.counting_number[region] << "\n";
-        
-        overall_belief *= xf::pow(RG.belief[region][iteration],RG.counting_number[region]);
-        
-    }
-
-    finish = std::chrono::high_resolution_clock::now();
-    elapsed = finish - start;
-    std::cout << "t(overall_belief)=  " << elapsed.count() << " s\n";
-
-}
 
 void GbpDecoder::get_marginals_and_hard_dec(int iteration)
 {
@@ -747,10 +609,6 @@ void GbpDecoder::get_marginals_and_hard_dec(int iteration)
     
     for (lemon::ListDigraph::NodeIt region(RG.rg); region != lemon::INVALID; ++region)
     {
-    // std::cout << "  - region " << RG.rg.id(region) << std::endl; 
-    // std::cout << "  - belief: \n\t" << RG.belief[region][iteration] << std::endl;
-    // std::cout << "  - argmax(belief): " << xt::argmax(RG.belief[region][iteration].data().value()) << std::endl << std::endl;
-
         xt::xarray<int> qubits_in_region = RG.region_qubits[region];
         for (int q = 0; q < qubits_in_region.size(); q++)
         {
@@ -777,14 +635,11 @@ void GbpDecoder::get_marginals_and_hard_dec(int iteration)
                     j++;
                 }
 
-                // xt::xarray<long double> bf = xt::pow(RG.belief[region][iteration].data().value(),RG.counting_number[region]);
-
                 xt::xarray<long double> bf = RG.belief[region][iteration].data().value();
 
                 xt::xarray<long double> marginal = xt::sum(bf, dim_of_qubits_to_marg);
 
                 marginals[iteration].at(qubit_to_marg(0)) += marginal;
-                // xt::pow(marginal,RG.counting_number[region]);///xt::sum(marginal);
             }
         }
     
@@ -811,35 +666,29 @@ void GbpDecoder::get_marginals_and_hard_dec(int iteration)
 void GbpDecoder::get_marginals_and_hard_dec_2(int iteration)
 {
     for (int q = 0; q < n_q; q++)
-        marginals[iteration][q] = {0,0}; //q_factors[q].data().value();
-    
-    // std::cout << "\n** iteration = " << iteration << "\n";
+    {
+        marginals[iteration][q] = {0,0}; 
+    }
+        
 
     for (lemon::ListDigraph::NodeIt region(RG.rg); region != lemon::INVALID; ++region)
     {
         xt::xarray<int> qubits_in_region = RG.region_qubits[region];
 
         xt::xarray<long double> bf = RG.belief[region][iteration].data().value();
-        // xt::xarray<long double> bf = xt::pow(RG.belief[region][iteration].data().value(),RG.counting_number[region]);
+
         if (RG.counting_number[region] == 1)
         {
             xt::xarray<int> argmax_belief = xt::argmax(bf);
             auto argwhere_belief = xt::from_indices((xt::argwhere(xt::isclose(bf,xt::amax(bf)))));
             auto array_index = xt::flatten(xt::from_indices(xt::unravel_indices(argmax_belief, bf.shape())));
-            // if ((RG.region_checks[region](0) == 7) || (RG.region_checks[region](0) == 8) || (RG.region_checks[region](0) == 12) || (RG.region_checks[region](0) == 13))
-            // std::cout << "-- region " << RG.rg.id(region) << "\n   checks_in_region = " << RG.region_checks[region] << "\n   qubits_in_region = " << qubits_in_region  << "\n   argwhere_belief = " << argwhere_belief << "\n\n";//  belief = " << bf << "\n\n";
 
             for (int q = 0; q < qubits_in_region.size(); q++)
             {
                 if (array_index(q) == 1)
                 {
-                    // std::cout << qubits_in_region(q) << " ";
                     hard_decisions(iteration,qubits_in_region(q)) = 1;
                 }
-                // else
-                // {
-                //     hard_decisions(iteration,qubits_in_region(q)) = 0;
-                // }
             }
         }
 
@@ -864,13 +713,7 @@ void GbpDecoder::calculate_free_energy(int iteration)
         {
             tmp += log(q_factors[RG.region_qubits[region](i)]);
         }
-        // for (size_t i = 0; i < RG.region_checks[region].size(); i++)
-        // {
-        //     int c = RG.region_checks[region](i);
-        //     // std::cout << "c = " << c << "\n";
-        //     // std::cout << "syndromes(iteration,c) = " << syndromes(iteration,c) << "\n";
-        //     tmp += log(c_factors[syndromes(iteration,c)][c]);
-        // }
+
         tmp = -1*tmp*bf;
         tmp.data().value() = xt::nan_to_num(tmp.data().value());
         region_average_energy = xt::sum(tmp.data().value())();
@@ -882,10 +725,6 @@ void GbpDecoder::calculate_free_energy(int iteration)
 
         region_entropy = -1.0 * xt::sum(tmp.data().value())();
 
-        // std::cout << "region = " << RG.rg.id(region) << "\n";
-        // std::cout << "region_average_energy = " << region_average_energy << "\n";
-        // std::cout << "region_entropy = " << region_entropy << "\n";
-
         average_energy += (long double)RG.counting_number[region] * region_average_energy;
         entropy += (long double)RG.counting_number[region] * region_entropy;
     }
@@ -894,7 +733,6 @@ void GbpDecoder::calculate_free_energy(int iteration)
 
 xt::xarray<long double> GbpDecoder::get_messages()
 {
-    // xt::xarray<long double> messages = xt::zeros<long double>({max_iterations,RG.n_edges,2});
     int max_dim = 0;
     for (lemon::ListDigraph::ArcIt edge(RG.rg); edge != lemon::INVALID; ++edge)
     {
@@ -905,8 +743,6 @@ xt::xarray<long double> GbpDecoder::get_messages()
 
     xt::xarray<long double> messages =  xt::zeros<long double>({max_iterations,RG.n_edges,max_dim});;
 
-    // messages.resize({max_iterations,RG.n_edges,2});
-    // std::cout << "*** get messages ***\n";
     for (int iteration = 0; iteration<max_iterations; iteration ++)
     {
         for (int edge = 0; edge < RG.n_edges; edge++)
@@ -915,9 +751,6 @@ xt::xarray<long double> GbpDecoder::get_messages()
             {
                 messages(iteration,edge,i) = RG.message[RG.rg.arcFromId(edge)][iteration].data().value().flat(i);
             }
-            // std::cout << "edge " << edge << "\nRG.message[RG.rg.arcFromId(edge)][iteration] = " << RG.message[RG.rg.arcFromId(edge)][iteration] << "\n";
-            
-            // messages(iteration,edge,1) = RG.message[RG.rg.arcFromId(edge)][iteration].data().value()(1);
         }
     }
 
@@ -928,7 +761,6 @@ xt::xarray<long double> GbpDecoder::get_messages()
 xt::xarray<long double> GbpDecoder::get_marginals()
 {
     xt::xarray<long double> marginals_ret = xt::zeros<long double>({max_iterations,n_q,2});
-    // marginals_ret.resize({max_iterations,n_q,2});
 
     for (int iteration = 0; iteration<max_iterations; iteration ++)
     {
@@ -945,11 +777,6 @@ xt::xarray<long double> GbpDecoder::get_marginals()
 
 xt::xarray<int> GbpDecoder::get_hard_decisions()
 {
-    // xt::xarray<int> hd = xt::ones<long double>({max_iterations,n_q})*-1;
-    // for (int iteration = 0; iteration<max_iterations; iteration ++)
-    // {
-    //     xt::row(hd,iteration) = hard_dec[iteration];
-    // }
     return hard_decisions;
 }
 

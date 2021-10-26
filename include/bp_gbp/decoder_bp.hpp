@@ -24,6 +24,7 @@
 #include <valarray>
 #include <experimental/tuple>
 
+namespace bp{
 
 class BpDecoder
 {
@@ -52,6 +53,9 @@ class BpDecoder
         lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_cq;
         lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_qc;
 
+        lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_cq_current;
+        lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_qc_current;
+
         lemon::ListBpGraph::EdgeMap< bool > erased;
         bool erasure_channel;
         
@@ -62,34 +66,41 @@ class BpDecoder
         xt::xarray<int> hard_decision;
         xt::xarray<int> syndromes;
 
+        xt::xarray<int> s_0;
+
         xt::xarray<long double> free_energy;
 
         std::vector<std::vector<variable_type>> c_factors; //1st vector: 0/1, 2nd vecor: check c, variable_tpye: xframe
         void fill_c_factors();
 
-
         void initialize_graph();
-       
 
-        void check_to_bit(xt::xarray<int> * s_0, long double w, int iteration);
-        void check_to_bit_fractional(xt::xarray<int> * s_0, long double w, long double alpha, int iteration);
-        void bit_to_check(long double w, int iteration);
-        void bit_to_check_memory(long double w, int iteration, long double alpha);
-        void bit_to_check_urw(long double w, int iteration, long double alpha);
 
-        void bit_serial_update(xt::xarray<int> * s_0, long double w, int iteration);
-        
-        void bit_serial_update_urw(xt::xarray<int> * s_0, long double w, long double alpha, int iteration);
+        // Update single edges
+        void update_edge(const lemon::ListBpGraph::Edge& edge, std::string direction, int iteration);
+        void check_to_bit_single(const lemon::ListBpGraph::Edge& message_edge, int iteration);
+        void bit_to_check_single(const lemon::ListBpGraph::Edge& message_edge, int iteration);
 
-        void check_serial_update(xt::xarray<int> * s_0, long double w, int iteration);
+        // Update all outgoing edges of check/qubit
+        void check_update(const lemon::ListBpGraph::RedNode& check, int iteration);
+        void qubit_update(const lemon::ListBpGraph::BlueNode& qubit, int iteration);
 
-        void check_update(lemon::ListBpGraph::RedNode& check, int iteration, xt::xarray<int>* s_0, long double w);
-        void bit_update(lemon::ListBpGraph::RedNode& check, int iteration, long double w);
+        // Parallel
+        void check_to_bit(int iteration);
+        void bit_to_check(int iteration);
+
+        // Serial
+        void check_serial_update(int iteration);
+        void bit_serial_update(int iteration);
+
+        // Sequential
+        void check_sequential_update(int iteration);
+        void bit_sequential_update(int iteration);
+
+
 
         void marginals_and_hard_decision(int iteration);
         void marginals_and_hard_decision_serial(int iteration);
-        void marginals_and_hard_decision_fractional(int iteration, long double alpha);
-        void marginals_and_hard_decision_urw(int iteration, long double alpha);
 
         void calculate_free_energy(xt::xarray<int> * s_0,int iteration);
 
@@ -103,15 +114,32 @@ class BpDecoder
                             std::forward<Tuple>(tuple));
         } // https://stackoverflow.com/questions/42494715/c-transform-a-stdtuplea-a-a-to-a-stdvector-or-stddeque
 
+        struct Properties
+            {
+                int m_max_iter;
+                long double m_w;
+                long double m_alpha;
+                int m_type;
+                bool m_return_if_success;
+                bool m_only_nonconverged_edges;
+            } m_properties;
+
+        int m_schedule_bp;
+        int m_reweight_bp;
+
+        bool m_fractional=false;
+        bool m_urw=false;
+        bool m_memory=false;
+
     public:
         BpDecoder(xt::xarray<int> H);
 
         xt::xarray<long double> p_initial;
 
-        void initialize_bp(xt::xarray<long double> p_init, int max_iter); 
-        void initialize_bp();
+        void initialize_bp(xt::xarray<long double> p_init, int t_max_iter, long double t_w, long double t_alpha, int t_type, bool t_return_if_success, bool t_only_nonconverged_edges);
+        void initialize_bp(xt::xarray<int> * t_s_0);
         void initialize_erasures(xt::xarray<int> * erasures);
-        xt::xarray<int> decode_bp(xt::xarray<int> s_0, long double w, long double alpha, int type_bp, bool return_if_success, bool only_non_converged);
+        xt::xarray<int> decode_bp(xt::xarray<int> t_s_0);
 
         xt::xarray<long double> get_marginals();
         xt::xarray<long double> get_messages();
@@ -125,5 +153,7 @@ class BpDecoder
         xt::xarray<int> get_check_and_qubit(int edge);
         int took_iterations;
 };
+
+} // end of namespace bp
 
 #endif

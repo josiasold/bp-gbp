@@ -1,5 +1,6 @@
 #include <bp_gbp/decoder_bp_kuolai.hpp>
 
+namespace bp{
 
 BpDecoderKL::BpDecoderKL(xt::xarray<int> H) : H(H), qubit_label(g), check_label(g),edge_label(g), edge_type(g), m_cq(g), m_qc(g), erased(g), converged_cq(g), converged_qc(g), marginals(g)
 {
@@ -53,24 +54,32 @@ void BpDecoderKL::initialize_graph()
     // std::cout << "initialized graph with n_c = " << n_c << " n_q = " << n_q << std::endl; 
 }
 
-void BpDecoderKL::initialize_bp(xt::xarray<long double> p_init, int max_iter)
+void BpDecoderKL::initialize_bp(xt::xarray<long double> p_init, int t_max_iter, long double t_w, long double t_alpha, int t_type, bool t_return_if_success, bool t_only_nonconverged_edges)
 {
     p_initial = p_init;
-    max_iterations = max_iter;
-    // erasure_channel = false;
-    hard_decision =  xt::zeros<int>({max_iter+1,n_q});
-    syndromes = xt::zeros<int>({max_iter+1,n_c});
-    free_energy = xt::zeros<long double>({max_iter+1});
+    max_iterations = t_max_iter;
+    
+    m_properties.m_max_iter = t_max_iter;
+    m_properties.m_w = t_w;
+    m_properties.m_alpha = t_alpha;
+    m_properties.m_type = t_type;
+    m_properties.m_return_if_success = t_return_if_success;
+    m_properties.m_only_nonconverged_edges = t_only_nonconverged_edges;
+
+
+    hard_decision =  xt::zeros<int>({t_max_iter+1,n_q});
+    syndromes = xt::zeros<int>({t_max_iter+1,n_c});
+    free_energy = xt::zeros<long double>({t_max_iter+1});
     for (lemon::ListBpGraph::EdgeIt edge(g); edge != lemon::INVALID; ++edge)
     {
-        m_cq[edge] = xt::zeros<long double>({max_iter});
-        m_qc[edge] = xt::zeros<long double>({max_iter});
+        m_cq[edge] = xt::zeros<long double>({t_max_iter});
+        m_qc[edge] = xt::zeros<long double>({t_max_iter});
 
         m_qc[edge](0) = 2 * (p_initial(0) + p_initial(edge_type[edge]))- 1;
     }
     for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
     {
-        marginals[qubit] = xt::ones<long double>({max_iter,4});
+        marginals[qubit] = xt::ones<long double>({t_max_iter,4});
         xt::row(marginals[qubit],0) = p_init;
     }
     lemon::mapFill(g,converged_cq,false);
@@ -108,10 +117,8 @@ void BpDecoderKL::initialize_bp(xt::xarray<int> * s_0)
             converged_qc[edge] = false;
         }
 
-
-        
     }
-    check_to_bit(s_0, 0, 1.0, 1.0);
+    check_to_bit(s_0, 0);
     for (lemon::ListBpGraph::BlueNodeIt qubit(g); qubit != lemon::INVALID; ++qubit)
     {
         marginals[qubit] = xt::ones<long double>({max_iterations,4});
@@ -160,14 +167,15 @@ void BpDecoderKL::initialize_erasures(xt::xarray<int> * erasures)
     }
 }
 
-xt::xarray<int> BpDecoderKL::decode_bp(xt::xarray<int> s_0, long double w, long double alpha, int type_bp, bool return_if_success, bool converged)
+
+xt::xarray<int> BpDecoderKL::decode_bp(xt::xarray<int> s_0)
 {
     if (is_initialized == false)
     {
         std::cerr << "BP not initialized, please run initialize_bp(xt::xarray<long double> p_init)" << std::endl;
     }
 
-    only_non_converged = converged;
+    only_non_converged = m_properties.m_only_nonconverged_edges;
 
     initialize_bp(&s_0);
 
@@ -175,59 +183,32 @@ xt::xarray<int> BpDecoderKL::decode_bp(xt::xarray<int> s_0, long double w, long 
     for (int iteration = 1; iteration < max_iterations; iteration++)
     {
         
-        if (type_bp == 0) // parallel standard
+        if (m_properties.m_type == 0) // parallel
         {
-            check_to_bit(&s_0, iteration, w, 1);
-            bit_to_check(iteration, w, 1);
-            marginals_and_hard_decision(iteration, 1);
+            check_to_bit(&s_0, iteration);
+            bit_to_check(iteration);
+            marginals_and_hard_decision(iteration);
         }
-        else if (type_bp == 1) // parallel memory
+        else if (m_properties.m_type == 1) // bit serial
         {
-            check_to_bit(&s_0, iteration, w, alpha);
-            bit_to_check(iteration, w, alpha);
-            marginals_and_hard_decision(iteration, alpha);
+            bit_serial_update(&s_0, iteration);
+            marginals_and_hard_decision_serial(iteration);
         }
-        else if (type_bp == 10) // bit serial standard
+        else if (m_properties.m_type == 2) // check serial
         {
-            bit_serial_update(&s_0, iteration, w, 1);
-            marginals_and_hard_decision_serial(iteration, 1);
+            check_serial_update(&s_0, iteration);
+            marginals_and_hard_decision_serial(iteration);
         }
-        else if (type_bp == 11) // bit serial memory
+        else if (m_properties.m_type == 3) // bit sequential
         {
-            bit_serial_update(&s_0, iteration, w, alpha);
-            marginals_and_hard_decision_serial(iteration, alpha);
+            bit_sequential_update(&s_0, iteration);
+            marginals_and_hard_decision_serial(iteration);
         }
-        else if (type_bp == 30) // bit sequential standard
+        else if (m_properties.m_type == 4) // check sequential
         {
-            bit_sequential_update(&s_0, iteration, w, 1);
-            marginals_and_hard_decision_serial(iteration, 1);
+            check_sequential_update(&s_0, iteration);
+            marginals_and_hard_decision_serial(iteration);
         }
-        else if (type_bp == 31) // bit sequential memory
-        {
-            bit_sequential_update(&s_0, iteration, w, alpha);
-            marginals_and_hard_decision_serial(iteration, alpha);
-        }
-        else if (type_bp == 20) // check serial standard
-        {
-            check_serial_update(&s_0, iteration, w, 1);
-            marginals_and_hard_decision_serial(iteration,1);
-        }
-        else if (type_bp == 21) // check serial memory
-        {
-            check_serial_update(&s_0, iteration, w, alpha);
-            marginals_and_hard_decision_serial(iteration,alpha);
-        }
-        else if (type_bp == 40) // check sequential standard
-        {
-            check_sequential_update(&s_0, iteration, w, 1);
-            marginals_and_hard_decision_serial(iteration, 1);
-        }
-        else if (type_bp == 41) // check sequential memory
-        {
-            check_sequential_update(&s_0, iteration, w, alpha);
-            marginals_and_hard_decision_serial(iteration, alpha);
-        }
-
         
 
         calculate_free_energy(iteration);
@@ -243,7 +224,7 @@ xt::xarray<int> BpDecoderKL::decode_bp(xt::xarray<int> s_0, long double w, long 
         {
             took_iter = iteration;
             took_iterations = took_iter;
-            if (return_if_success)
+            if (m_properties.m_return_if_success)
             {
                 return hd;
             }
@@ -258,15 +239,17 @@ xt::xarray<int> BpDecoderKL::decode_bp(xt::xarray<int> s_0, long double w, long 
         xt::xarray<int> hd =  xt::row(hard_decision,i);
         if (xt::sum(hd)() != 0)
         {
-            return hd;// = hd;
+            return hd;
         }
     }
     return hd;
 }
 
 
-void BpDecoderKL::check_to_bit(xt::xarray<int> * s_0, int iteration,long double w, long double alpha)
+void BpDecoderKL::check_to_bit(xt::xarray<int> * s_0, int iteration)
 {
+    long double w = m_properties.m_w;
+    long double alpha = m_properties.m_alpha;
     for (lemon::ListBpGraph::RedNodeIt check(g); check != lemon::INVALID; ++check)
     {
         long double message = 1;
@@ -313,8 +296,10 @@ void BpDecoderKL::check_to_bit(xt::xarray<int> * s_0, int iteration,long double 
     return;
 }
 
-void BpDecoderKL::bit_to_check(int iteration,long double w, long double alpha)
+void BpDecoderKL::bit_to_check(int iteration)
 {
+    long double w = m_properties.m_w;
+    long double alpha = m_properties.m_alpha;
     xt::xarray<int> comm_table = {{0, 0, 0, 0},
                                   {0, 0, 1, 1},
                                   {0, 1, 0, 1},
@@ -405,8 +390,10 @@ void BpDecoderKL::bit_to_check(int iteration,long double w, long double alpha)
     return;
 }
 
-void BpDecoderKL::bit_serial_update(xt::xarray<int> * s_0, int iteration,long double w, long double alpha)
+void BpDecoderKL::bit_serial_update(xt::xarray<int> * s_0, int iteration)
 {
+    long double w = m_properties.m_w;
+    long double alpha = m_properties.m_alpha;
     xt::xarray<int> comm_table= {{0, 0, 0, 0},
                                  {0, 0, 1, 1},
                                  {0, 1, 0, 1},
@@ -528,8 +515,10 @@ void BpDecoderKL::bit_serial_update(xt::xarray<int> * s_0, int iteration,long do
     return;
 }
 
-void BpDecoderKL::bit_sequential_update(xt::xarray<int> * s_0, int iteration,long double w, long double alpha)
+void BpDecoderKL::bit_sequential_update(xt::xarray<int> * s_0, int iteration)
 {
+    long double w = m_properties.m_w;
+    long double alpha = m_properties.m_alpha;
     xt::xarray<int> comm_table= {{0, 0, 0, 0},
                                  {0, 0, 1, 1},
                                  {0, 1, 0, 1},
@@ -599,15 +588,9 @@ void BpDecoderKL::bit_sequential_update(xt::xarray<int> * s_0, int iteration,lon
                 long double old_message = m_qc[outgoing_message_edge](0);
 
                 m_qc[outgoing_message_edge](0) = (1-w)*old_message + w * message;
-                
-                // if (iteration < 4)
-                    // std::cout << "it " << iteration << " q " << qubit_label[qubit] << " -> c " << check_label[g.redNode(message_edge)] << " m_qc = " << m_qc[message_edge](0) << "\n";
 
-                // m_qc[message_edge](iteration) = (1-w) * m_qc[message_edge](iteration-1) + w * message;
-
-                // // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
                 long double diff = fabs(m_qc[outgoing_message_edge](0) -  old_message);
-                // std::cout << "iteration = " << iteration << " diff = " << diff << "\n";
+
                 if ((diff < 1E-100) && (iteration > 5))
                 {
                     converged_qc[outgoing_message_edge] = true;
@@ -638,7 +621,6 @@ void BpDecoderKL::bit_sequential_update(xt::xarray<int> * s_0, int iteration,lon
                     long double old_message = m_cq[message_edge](0);
                     m_cq[message_edge](0) = (1-w)*old_message + w*message;
                     
-                    // std::cout <<  "m_cq[message_edge] = " << m_cq[message_edge] << std::endl;
                     long double diff = fabs(m_cq[message_edge](0) - old_message);
                     if ((diff < 1E-100) && (iteration > 5))
                     {
@@ -652,7 +634,7 @@ void BpDecoderKL::bit_sequential_update(xt::xarray<int> * s_0, int iteration,lon
     return;
 }
 
-void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long double w, long double alpha)
+void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration)
 {
     xt::xarray<int> comm_table= {{0, 0, 0, 0},
                                  {0, 0, 1, 1},
@@ -662,7 +644,6 @@ void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long 
     for (lemon::ListBpGraph::RedNodeIt check(g); check != lemon::INVALID; ++check)
     { // for each check do
 
-
         for (lemon::ListBpGraph::IncEdgeIt message_edge(g,check); message_edge != lemon::INVALID; ++message_edge)
         { // calculate  all incoming (q -> c) messages
             if (!((converged_qc[message_edge]) && (only_non_converged)))
@@ -671,21 +652,13 @@ void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long 
                 for (lemon::ListBpGraph::IncEdgeIt other_edge(g,g.blueNode(message_edge)); other_edge != lemon::INVALID; ++other_edge)
                 {
                     if (other_edge != message_edge)
-                    {
+                    {   
                         xt::xarray<long double> r = xt::ones<long double>({2});
-                        if (alpha == 1.0)
-                        {
-                            r(0) = (1 + m_cq[other_edge](0))/2;
-                            r(1) = (1 - m_cq[other_edge](0))/2;
-                        }
-                        else
-                        {
-                            r(0) = pow((1 + m_cq[other_edge](0))/2,1.0/alpha);
-                            r(1) = pow((1 - m_cq[other_edge](0))/2,1.0/alpha);
-                        }
 
-                        q(0) *=  r(0);
-                        
+                        r(0) = pow((1 + m_cq[other_edge](0))/2,1.0/m_properties.m_alpha);
+                        r(1) = pow((1 - m_cq[other_edge](0))/2,1.0/m_properties.m_alpha);
+
+                        q(0) *= r(0);
                         for (size_t p = 1; p < 4; p++)
                         {
                             int sp = comm_table(p,edge_type[other_edge]);
@@ -693,7 +666,6 @@ void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long 
                         }
                     }
                 }
-
 
                 long double q_0 = q(0) + q(edge_type[message_edge]);
                 long double q_1 = 0;
@@ -705,10 +677,10 @@ void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long 
                     }
                 }
 
-                if (alpha != 1.0)
+                if (m_properties.m_alpha != 1.0)
                 {
-                    long double r_0 = pow((1 + m_cq[message_edge](0))/2.0,1.0/alpha-1.0);
-                    long double r_1 = pow((1 - m_cq[message_edge](0))/2.0,1.0/alpha-1.0);
+                    long double r_0 = pow((1 + m_cq[message_edge](0))/2.0,1.0/m_properties.m_alpha-1.0);
+                    long double r_1 = pow((1 - m_cq[message_edge](0))/2.0,1.0/m_properties.m_alpha-1.0);
                     q_0 *= r_0;
                     q_1 *= r_1;
                 }
@@ -721,16 +693,10 @@ void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long 
 
                 long double old_message = m_qc[message_edge](0);
 
-                m_qc[message_edge](0) = (1-w) * old_message + w*message;
-                m_qc[message_edge](iteration) = (1-w) * old_message + w*message;
-                // if (iteration < 4)
-                // std::cout << "it " << iteration << " c " << check_label[g.redNode(message_edge)] << " <- q " << qubit_label[g.blueNode(message_edge)] << " m_qc = " << m_qc[message_edge](0) << "\n";
+                m_qc[message_edge](0) = (1-m_properties.m_w) * old_message + m_properties.m_w*message;
+                m_qc[message_edge](iteration) = (1-m_properties.m_w) * old_message + m_properties.m_w*message;
 
-                // m_qc[message_edge](iteration) = (1-w) * m_qc[message_edge](iteration-1) + w * message;
-
-                // // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
                 long double diff = fabs(m_qc[message_edge](0) -  old_message);
-                // std::cout << "iteration = " << iteration << " diff = " << diff << "\n";
                 if ((diff < 1E-100) && (iteration > 5))
                 {
                     converged_qc[message_edge] = true;
@@ -754,38 +720,26 @@ void BpDecoderKL::check_serial_update(xt::xarray<int> * s_0, int iteration,long 
                     }
                 }
 
-
-                // if (iteration == 1)
-                // {
-                //     m_cq[message_edge](iteration) = message;
-                // }
-                // else
-                // {
-                //     m_cq[message_edge](iteration) = (1-w) * m_cq[message_edge](iteration-1) + w * message;
-                // }
-                
-                // // std::cout <<  "m_cq[message_edge] = " << m_cq[message_edge] << std::endl;
                 
                 long double old_message = m_cq[message_edge](0);
-                m_cq[message_edge](0) = (1-w)*old_message + w*message;
-                m_cq[message_edge](iteration) = (1-w)*old_message + w*message;
+                m_cq[message_edge](0) = (1-m_properties.m_w)*old_message + m_properties.m_w*message;
+                m_cq[message_edge](iteration) = (1-m_properties.m_w)*old_message + m_properties.m_w*message;
 
                 long double diff = fabs(m_cq[message_edge](0) - old_message);
-                if ((diff < 1E-100) && (iteration > 2))
+                if ((diff < 1E-100) && (iteration > 5))
                 {
                     converged_cq[message_edge] = true;
                 }
             }
-
-            // if (iteration < 4)
-            // std::cout << "it " << iteration << " c " << check_label[g.redNode(message_edge)] << " -> q " << qubit_label[g.blueNode(message_edge)] << " m_cq = " << m_cq[message_edge](0) << "\n";
         }
     }
     return;
 }
 
-void BpDecoderKL::check_sequential_update(xt::xarray<int> * s_0, int iteration,long double w, long double alpha)
+void BpDecoderKL::check_sequential_update(xt::xarray<int> * s_0, int iteration)
 {
+    long double w = m_properties.m_w;
+    long double alpha = m_properties.m_alpha;
     xt::xarray<int> comm_table= {{0, 0, 0, 0},
                                  {0, 0, 1, 1},
                                  {0, 1, 0, 1},
@@ -825,7 +779,6 @@ void BpDecoderKL::check_sequential_update(xt::xarray<int> * s_0, int iteration,l
             }
         }
 
-        
         // update all neighboring qubits (q -> c) messages
         for (lemon::ListBpGraph::IncEdgeIt edge_to_qubit(g,check); edge_to_qubit != lemon::INVALID; ++edge_to_qubit)
         {
@@ -889,14 +842,7 @@ void BpDecoderKL::check_sequential_update(xt::xarray<int> * s_0, int iteration,l
 
                     m_qc[outgoing_message_edge](0) = (1-w)*old_message + w * message;
                     
-                    // if (iteration < 4)
-                        // std::cout << "it " << iteration << " q " << qubit_label[qubit] << " -> c " << check_label[g.redNode(message_edge)] << " m_qc = " << m_qc[message_edge](0) << "\n";
-
-                    // m_qc[message_edge](iteration) = (1-w) * m_qc[message_edge](iteration-1) + w * message;
-
-                    // // std::cout <<  "m_qc[message_edge] = " << m_qc[message_edge] << std::endl;
                     long double diff = fabs(m_qc[outgoing_message_edge](0) -  old_message);
-                    // std::cout << "iteration = " << iteration << " diff = " << diff << "\n";
                     if ((diff < 1E-100) && (iteration > 5))
                     {
                         converged_qc[outgoing_message_edge] = true;
@@ -908,8 +854,9 @@ void BpDecoderKL::check_sequential_update(xt::xarray<int> * s_0, int iteration,l
     return;
 }
 
-void BpDecoderKL::marginals_and_hard_decision(int iteration, long double alpha)
+void BpDecoderKL::marginals_and_hard_decision(int iteration)
 {
+    long double alpha = m_properties.m_alpha;
     xt::xarray<int> comm_table = {{0, 0, 0, 0},
                                   {0, 0, 1, 1},
                                   {0, 1, 0, 1},
@@ -981,8 +928,9 @@ void BpDecoderKL::marginals_and_hard_decision(int iteration, long double alpha)
     }
 }
 
-void BpDecoderKL::marginals_and_hard_decision_serial(int iteration, long double alpha)
+void BpDecoderKL::marginals_and_hard_decision_serial(int iteration)
 {
+    long double alpha = m_properties.m_alpha;
     xt::xarray<int> comm_table = {{0, 0, 0, 0},
                                   {0, 0, 1, 1},
                                   {0, 1, 0, 1},
@@ -1144,3 +1092,5 @@ xt::xarray<long double> BpDecoderKL::get_free_energy()
 {
     return free_energy;
 }
+
+} // end of namespace bp

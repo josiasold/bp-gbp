@@ -18,7 +18,7 @@
 
 #include <chrono>
 
-
+// tuple to valarray based on https://stackoverflow.com/questions/42494715/c-transform-a-stdtuplea-a-a-to-a-stdvector-or-stddeque
 template <class Tuple, class T = std::decay_t<std::tuple_element_t<0, std::decay_t<Tuple>>>>
 std::valarray<T> to_valarray(Tuple &&tuple)
 {
@@ -26,7 +26,7 @@ std::valarray<T> to_valarray(Tuple &&tuple)
     return std::valarray<T>{std::forward<decltype(elems)>(elems)...};
   },
                     std::forward<Tuple>(tuple));
-} // https://stackoverflow.com/questions/42494715/c-transform-a-stdtuplea-a-a-to-a-stdvector-or-stddeque
+}
 
 class GbpDecoder
 {
@@ -60,13 +60,11 @@ class GbpDecoder
         void update_messages(const xt::xarray<int> *s_0, xt::xarray<long double> p_initial,long double w_gbp, int iteration);
         void update_messages_2(const xt::xarray<int> *s_0, xt::xarray<long double> p_initial,long double w_gbp, int iteration);
         void update_beliefs(const xt::xarray<int> *s_0,int iteration);
-        void overall_belief(int iteration, const xt::xarray<int> s_0);
+        
         void get_marginals_and_hard_dec(int iteration);
         void get_marginals_and_hard_dec_2(int iteration);
 
         void calculate_free_energy(int iteration);
-
-        
 
     public:
         int took_iterations;
@@ -81,11 +79,10 @@ class GbpDecoder
         xt::xarray<int> get_hard_decisions();
         xt::xarray<int> get_syndromes();
         xt::xarray<bool> get_convergence();
-
 };
 
 template <typename BPD>
-xt::xarray<int> gbpPP(xt::xarray<int> residual_s, xt::xarray<int> H_X, xt::xarray<int> H_Z,BPD* bpDecoder, xt::xarray<long double> p_init ,int n_checks_per_r0, long double w_gbp, int type_gbp, int return_strategy, int repetitions_split, bool return_if_success, bool print_details, int* took_iterations, bool get_marg_mess, std::string OUTPUT_DIR, bool surface)
+xt::xarray<int> gbpPP(xt::xarray<int> residual_s, xt::xarray<int> H_X, xt::xarray<int> H_Z,BPD* bpDecoder, xt::xarray<long double> p_init ,int n_checks_per_r0, long double w_gbp, int type_gbp, int return_strategy, int repetitions_split, bool return_if_success, bool print_details, int* took_iterations, bool save_raw_data, std::string OUTPUT_DIR, bool surface)
 {
     int n_c_X = H_X.shape(0);
     int n_c_Z = H_Z.shape(0);
@@ -170,96 +167,71 @@ xt::xarray<int> gbpPP(xt::xarray<int> residual_s, xt::xarray<int> H_X, xt::xarra
             std::cout << "s_sub_0 = " << s_sub_0 << std::endl;
         }
 
-        bool condition = false;
-        bool condition_T = false;
+        bool start_gbp = false;
         bool disjoint = false;
-        bool disjoint_T = false;
         int rg_type = 0;
 
         if (surface)
         {
-            condition = true;
-            condition_T = true;
-            disjoint = true;
-            disjoint_T = true;
+            start_gbp = true;
             rg_type = pauli;
         }
         else
         {
-            // condition = (0 < n_qi) && ((n_qi <= sqrt(n_q)) || (n_ci / n_qi == 3/4));
-            // condition = (0 < n_qi) && (n_qi <= sqrt(n_q)) && (n_ci<n_qi);
-            // condition = (0 < n_qi) && (n_ci<n_qi);
-            // if (n_qi >= sqrt(n_q)) rg_type=0;
-            condition = (n_qi == n_q_base);
-            condition_T = (n_qi == n_c_base);
+            bool condition = (n_qi == n_q_base);
+            bool condition_T = (n_qi == n_c_base);
 
-            disjoint = ((n_qi % n_q_base == 0 ) && (n_qi > n_q_base) && (n_qi < 3*n_q_base));
-
-            disjoint_T = ((n_qi % n_c_base == 0 ) && (n_qi > n_c_base) && (n_qi < 3*n_c_base));
-            
-
+            bool disjoint_H = ((n_qi % n_q_base == 0 ) && (n_qi > n_q_base) && (n_qi < 3*n_q_base));
+            bool disjoint_T = ((n_qi % n_c_base == 0 ) && (n_qi > n_c_base) && (n_qi < 3*n_c_base));
+            disjoint = (disjoint_H || disjoint_T);
+            start_gbp = ((condition || condition_T) || disjoint );
         }
 
-        if ((condition || condition_T) || (disjoint || disjoint_T))
+        if (start_gbp)
         {
-
             int max_iter_gbp = 35;
             long double new_p;
             if (surface == true)
+            {
                 new_p = p_init(pauli);
-                // new_p = bpDecoder->p_initial(pauli);
+            }
             else
+            {
                 new_p = p_init(pauli);
-                // new_p = (long double)n_ci/(long double)n_c;
-            // long double new_p = 0.15;
-            // std::cout << "new_p = " << new_p << "\n";
+            }
 
             xt::xarray<long double> p_initial_gf2 = {1 - new_p, new_p};
-            // std::cout << "p_initial_gf2 = " << p_initial_gf2 << "\n";
-            // xt::xarray<int> check_list = xt::arange<int>({n_ci});
-            // int i = 0;
-            // int j = 0;
-            // for (auto s : s_sub_0)
-            // {
-            //     if (s != 0)
-            //     {
-            //         int tmp = check_list(i);
-            //         check_list(i) = check_list(j);
-            //         check_list(j)= tmp;
-            //         j++;
-            //     }
-            //     i++;
-            // }
+            
             xt::xarray<int> error_guess_sub = xt::zeros<int>({n_qi});
             if (disjoint)
             {
                 // GbpDecoder gbpDecoder(H_sub, max_iter_gbp, n_checks_per_r0, rg_type);
                 xt::xarray<int> check_list = xt::arange<int>({n_ci});
                 int n_disjoint_blocks;
-                if (n_ci > n_qi) n_disjoint_blocks = (int) n_qi / n_c_base;
-                else  n_disjoint_blocks = (int) n_qi / n_q_base;
+                if (n_ci > n_qi) 
+                {
+                    n_disjoint_blocks = (int) n_qi / n_c_base;
+                }
+                else
+                {
+                    n_disjoint_blocks = (int) n_qi / n_q_base;
+                }
 
-                if (n_disjoint_blocks == 0) n_disjoint_blocks = 1;
+                if (n_disjoint_blocks == 0) {n_disjoint_blocks = 1;}
                 
-                // std::cout << "n_ci = " << n_ci << std::endl;
-                // std::cout << "n_disjoint_blocks = " << n_disjoint_blocks << std::endl;
                 int len_disjoint_check_block = (int) n_ci / n_disjoint_blocks;
-                // std::cout << "len_disjoint_check_block = " << len_disjoint_check_block << "\n";
+
                 for (int i = 0; i < n_disjoint_blocks; i++)
                 {
                     auto v = xt::view(check_list,xt::range(i*len_disjoint_check_block,(i+1)*len_disjoint_check_block));
                     xt::random::shuffle(v);
                 }
-                // std::cout << "check_list = " << check_list << "\n";
+
                 GbpDecoder gbpDecoder(H_sub, max_iter_gbp, n_checks_per_r0, check_list, rg_type);
-            // std::cout << "constructed decoder\n";
-
-            // GbpDecoder2 gbpDecoder2(H_sub, max_iter_gbp,false);
-
 
                 error_guess_sub = gbpDecoder.decode(s_sub_0, p_initial_gf2, type_gbp, w_gbp,return_strategy, return_if_success);
                 *took_iterations = gbpDecoder.took_iterations;
-                if (get_marg_mess == true)
+                if (save_raw_data == true)
                 {
                     xt::xarray<long double> marginals = gbpDecoder.get_marginals();
                     xt::xarray<long double> messages = gbpDecoder.get_messages();
@@ -277,15 +249,10 @@ xt::xarray<int> gbpPP(xt::xarray<int> residual_s, xt::xarray<int> H_X, xt::xarra
             else
             {
                 GbpDecoder gbpDecoder(H_sub, max_iter_gbp, n_checks_per_r0, rg_type);
-                // GbpDecoder gbpDecoder(H_sub, max_iter_gbp, n_checks_per_r0, check_list, rg_type);
-                // std::cout << "constructed decoder\n";
-
-                // GbpDecoder2 gbpDecoder2(H_sub, max_iter_gbp,false);
-
 
                 error_guess_sub = gbpDecoder.decode(s_sub_0, p_initial_gf2, type_gbp, w_gbp, return_strategy, return_if_success);
                 *took_iterations = gbpDecoder.took_iterations;
-                if (get_marg_mess == true)
+                if (save_raw_data == true)
                 {
                     xt::xarray<long double> marginals = gbpDecoder.get_marginals();
                     xt::xarray<long double> messages = gbpDecoder.get_messages();
@@ -301,13 +268,6 @@ xt::xarray<int> gbpPP(xt::xarray<int> residual_s, xt::xarray<int> H_X, xt::xarra
                 }
             }
             
-            // xt::xarray<int> s_sub = gf2_syndrome(&error_guess_sub, &H_sub);
-
-            // int trys_p_init = 0;
-            // std::vector<long double> p_rep = {new_p, 0.15, 0.2, 0.25, 0.3, 0.4};
-            // int max_trys_p_init = p_rep.size();
-
-
             for (int i = 0; i < n_qi; i++)
             {
                 if (error_guess_sub(i) == 1)
