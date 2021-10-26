@@ -10,11 +10,11 @@ Libraries used are
 - [JSON for Modern C++](https://github.com/nlohmann/json) for I/O handling
 - [NTL](https://github.com/libntl/ntl) for computation of GF(2) ranks
 - [gmp](https://gmplib.org) in conjunction with NTL
-- [xtensor](https://github.com/xtensor-stack/xtensor), [xframe](https://github.com/xtensor-stack/xframe) and their dependencies as data structure
+- [xtensor](https://github.com/xtensor-stack/xtensor), [xframe](https://github.com/xtensor-stack/xframe), [xtensor-blas](https://github.com/xtensor-stack/xtensor-blas) and their dependencies as data structure
 - [lemon graph library](https://lemon.cs.elte.hu/trac/lemon) as graph structure
-- [CPPItertools](https://github.com/ryanhaining/cppitertools )
+- [CPPItertools](https://github.com/ryanhaining/cppitertools)
 
-Header only libraries included in the `include` directory should work right away, NTL with gmp, xtensor and lemon might have to be installed separately.
+The json header only library included in the `include` directory should work right away, the [CPPItertools](https://github.com/ryanhaining/cppitertools) can just be cloned into that directory. In order to work with the given CMakeLists files, best install NTL with gmp, xtensor et al. and lemon into the root directory, such that header files are in `include`.
 
 
 ### Build
