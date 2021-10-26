@@ -5,9 +5,18 @@ lib64/
 share/
 build/
 .vscode/
-include/*
-!include/bp_gbp
-sim/output/
+include/lemon
+include/NTL
+include/xflens
+include/xframe
+include/xsimd
+include/xtensor
+include/xtensor-blas
+include/xtl
+include/xtensor.hpp
+
+
+# sim/output/
 
 # Prerequisites
 *.d
