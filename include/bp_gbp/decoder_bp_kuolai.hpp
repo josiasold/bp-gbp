@@ -23,9 +23,6 @@ namespace bp{
     class BpDecoderKL
     {
         private:
-            int max_iterations;
-            bool only_non_converged;
-
             xt::xarray<int> H;
             int n_q;
             int n_c;
@@ -43,6 +40,11 @@ namespace bp{
             lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_cq;
             lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > m_qc;
 
+            lemon::ListBpGraph::EdgeMap< long double > m_cq_current;
+            lemon::ListBpGraph::EdgeMap< long double > m_qc_current;
+
+            lemon::ListBpGraph::EdgeMap< xt::xarray<long double> > r;
+
             lemon::ListBpGraph::BlueNodeMap< bool > erased;
             bool erasure_channel;
 
@@ -53,23 +55,31 @@ namespace bp{
             xt::xarray<int> hard_decision;
             xt::xarray<int> syndromes;
 
+            xt::xarray<int> s_0;
+
             xt::xarray<long double> free_energy;
 
 
             void initialize_graph();
         
+            void check_to_bit_single_edge(const lemon::ListBpGraph::Edge& message_edge, int iteration);
+            void bit_to_check_single_edge(const lemon::ListBpGraph::Edge& message_edge, int iteration);
 
-            void check_to_bit(xt::xarray<int> * s_0, int iteration);
+            void check_update(const lemon::ListBpGraph::RedNode& check, int iteration);
+            void qubit_update(const lemon::ListBpGraph::BlueNode& qubit, int iteration);
+
+            void calculate_r_single_edge(const lemon::ListBpGraph::Edge& edge);
+
+            void check_to_bit(int iteration);
             void bit_to_check(int iteration);
 
-            void bit_serial_update(xt::xarray<int> * s_0, int iteration);
-            void bit_sequential_update(xt::xarray<int> * s_0, int iteration);
-    
-            void check_serial_update(xt::xarray<int> * s_0, int iteration);
-            void check_sequential_update(xt::xarray<int> * s_0, int iteration);
+            void check_serial_update(int iteration);
+            void bit_serial_update(int iteration);
+
+            void check_sequential_update(int iteration);
+            void bit_sequential_update(int iteration);
 
             void marginals_and_hard_decision(int iteration);
-            void marginals_and_hard_decision_serial(int iteration);
 
             void calculate_free_energy(int iteration);
             
@@ -88,10 +98,10 @@ namespace bp{
 
             xt::xarray<long double> p_initial;
 
-            void initialize_bp(xt::xarray<int> * s_0);
+            void initialize_bp(xt::xarray<int> * t_s_0);
             void initialize_bp(xt::xarray<long double> p_init, int t_max_iter, long double t_w, long double t_alpha, int t_type, bool t_return_if_success, bool t_only_nonconverged_edges);
             void initialize_erasures(xt::xarray<int> * erasures);
-            xt::xarray<int> decode_bp(xt::xarray<int> s_0);
+            xt::xarray<int> decode_bp(xt::xarray<int> t_s_0);
 
             xt::xarray<long double> get_marginals();
             xt::xarray<long double> get_messages();
